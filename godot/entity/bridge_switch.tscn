@@ -1,0 +1,18 @@
+[gd_scene format=3]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_1"]
+size = Vector2(14, 6)
+
+[node name="BridgeSwitch" type="BridgeSwitch" groups=["bridge_switch"]]
+collision_layer = 0
+collision_mask = 10
+monitoring = true
+monitorable = true
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="."]
+shape = SubResource("RectangleShape2D_1")
+position = Vector2(0, 1)
+
+[node name="Visual" type="Polygon2D" parent="."]
+color = Color(0, 0.894118, 0.27451, 1)
+polygon = PackedVector2Array(-7, -3, 7, -3, 7, 3, -7, 3)

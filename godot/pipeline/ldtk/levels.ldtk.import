@@ -1,0 +1,39 @@
+[remap]
+
+importer="ldtk.import"
+type="PackedScene"
+uid="uid://caeiwiypatbi2"
+path="res://.godot/imported/levels.ldtk-eda5e781072fa26ca15c1d4e422f0c8c.scn"
+
+[deps]
+
+files=["res://pipeline/ldtk/tilesets/tileset_8px.res", "res://pipeline/ldtk/levels/Room_0_0.scn", "res://.godot/imported/levels.ldtk-eda5e781072fa26ca15c1d4e422f0c8c.scn"]
+
+source_file="res://pipeline/ldtk/levels.ldtk"
+dest_files=["res://.godot/imported/levels.ldtk-eda5e781072fa26ca15c1d4e422f0c8c.scn", "res://pipeline/ldtk/tilesets/tileset_8px.res", "res://pipeline/ldtk/levels/Room_0_0.scn", "res://.godot/imported/levels.ldtk-eda5e781072fa26ca15c1d4e422f0c8c.scn"]
+
+[params]
+
+World=""
+group_world_layers=false
+Level=""
+pack_levels=true
+level_save_extension=0
+Layer=""
+layers_always_visible=false
+Tileset=""
+tileset_custom_data=false
+integer_grid_tilesets=true
+atlas_texture_type=0
+tileset_save_extension=0
+Entity=""
+resolve_entityrefs=true
+use_entity_placeholders=true
+Post Import=""
+tileset_post_import=""
+entities_post_import="res://pipeline/ldtk/entities_post_import.gd"
+level_post_import="res://pipeline/ldtk/level_post_import.gd"
+world_post_import=""
+Debug=""
+force_tileset_reimport=false
+verbose_output=false

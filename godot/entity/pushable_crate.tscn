@@ -1,0 +1,18 @@
+[gd_scene format=3 uid="uid://dbmb4r6qeusep"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_1"]
+size = Vector2(8, 8)
+
+[node name="PushableCrate" type="PushableCrate" unique_id=971290111 groups=["crate"]]
+z_index = 10
+collision_layer = 8
+collision_mask = 15
+lock_rotation = true
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="." unique_id=230921030]
+position = Vector2(4, 4)
+shape = SubResource("RectangleShape2D_1")
+
+[node name="Visual" type="Polygon2D" parent="." unique_id=1102780208]
+color = Color(1, 0.639216, 0, 1)
+polygon = PackedVector2Array(0, 0, 8, 0, 8, 8, 0, 8)
