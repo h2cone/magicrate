@@ -1,8 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use godot::{
-    classes::{CharacterBody2D, INode2D, Node, Node2D, ProjectSettings, RigidBody2D, TileMapLayer},
+    classes::file_access::ModeFlags,
+    classes::{
+        CharacterBody2D, DirAccess, INode2D, Node, Node2D, ProjectSettings, ResourceLoader,
+        RigidBody2D, TileMapLayer,
+    },
     prelude::*,
+    tools::GFile,
 };
 
 use crate::{
@@ -15,6 +20,7 @@ use crate::{
 
 const DEFAULT_PLAYER_SCENE: &str = "res://player/player.tscn";
 const DEFAULT_STAGE_DIR: &str = "res://pipeline/ldtk/levels";
+const DEFAULT_STAGE_MANIFEST: &str = "res://pipeline/ldtk/stage_manifest.txt";
 const ENTITY_LAYER_NAME: &str = "Entities";
 const PLAYER_SPAWN_PATH: &str = "Entities/PlayerSpawn";
 const PLACEHOLDER_PLAYER_SPAWN: &str = "PlayerSpawn";
@@ -752,23 +758,56 @@ impl LevelRuntime {
     }
 
     fn discover_stage_paths(stage_dir: &str) -> Vec<String> {
-        let global_dir = ProjectSettings::singleton()
-            .globalize_path(stage_dir)
-            .to_string();
+        if let Some(stage_paths) = Self::load_stage_manifest(DEFAULT_STAGE_MANIFEST, stage_dir) {
+            return stage_paths;
+        }
 
-        let Ok(entries) = std::fs::read_dir(&global_dir) else {
-            return Vec::new();
-        };
+        let mut resource_loader = ResourceLoader::singleton();
+        let mut file_names: Vec<String> = resource_loader
+            .list_directory(stage_dir)
+            .to_vec()
+            .into_iter()
+            .map(|entry| entry.to_string())
+            .collect();
 
-        let file_names = entries
-            .filter_map(|entry| entry.ok())
-            .filter_map(|entry| entry.file_name().into_string().ok());
+        if file_names.is_empty() {
+            file_names = DirAccess::get_files_at(stage_dir)
+                .to_vec()
+                .into_iter()
+                .map(|entry| entry.to_string())
+                .collect();
+        }
+
         let room_files = stage_paths::collect_sorted_room_files(file_names);
 
         room_files
             .into_iter()
             .map(|file_name| format!("{}/{}", stage_dir, file_name))
             .collect()
+    }
+
+    fn load_stage_manifest(manifest_path: &str, stage_dir: &str) -> Option<Vec<String>> {
+        let mut manifest = GFile::open(manifest_path, ModeFlags::READ).ok()?;
+        let raw = manifest.read_as_gstring_entire().ok()?.to_string();
+
+        let stage_paths: Vec<String> = raw
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+            .map(|line| {
+                if line.starts_with("res://") {
+                    line.to_string()
+                } else {
+                    format!("{}/{}", stage_dir, line)
+                }
+            })
+            .collect();
+
+        if stage_paths.is_empty() {
+            None
+        } else {
+            Some(stage_paths)
+        }
     }
 
     fn center_stage_in_viewport(stage: &mut Gd<Node2D>, viewport_size: Vector2) {
