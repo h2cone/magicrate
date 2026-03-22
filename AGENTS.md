@@ -1,35 +1,30 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- `rust/` is the Godot GDExtension crate.
-  - `src/core/`: pure gameplay logic (activation, crate runtime, stage sorting, undo helpers) with unit tests.
-  - `src/entity/`: Godot node classes such as `BridgeSwitch`, `BridgeTile`, `GoalPetal`, and `PushableCrate`.
-  - `src/game/`, `src/level/`, `src/player/`, `src/rooms/`, `src/undo/`: runtime orchestration and scene integration.
-- `godot/` is the Godot 4.6 project.
-  - `game.tscn` is the main scene; `entity/` and `player/` hold scene files.
-  - `pipeline/ldtk/` contains LDtk post-import scripts and generated room assets.
-  - `addons/` contains third-party plugins (`ldtk-importer`, `AsepriteWizard`); avoid editing unless intentionally upgrading vendor code.
-- `docs/p8/` stores prototype references.
+`godot/` is the Godot 4.6 project. `game.tscn` is the entry scene, `entity/` and `player/` hold scene files, and `pipeline/ldtk/` contains LDtk data, post-import scripts, and generated room scenes. `godot/addons/` contains vendored plugins (`ldtk-importer`, `AsepriteWizard`); only edit these when intentionally updating vendor code.
+
+`rust/` is the Rust workspace. The root crate builds the GDExtension bridge in `rust/src/`, while `rust/gameplay_core/src/` holds engine-agnostic gameplay logic such as movement, snapshots, undo history, and stage path handling. `scripts/` contains PowerShell entry points for local run, export, and `gdext` revision updates.
 
 ## Build, Test, and Development Commands
-- `cd rust && cargo build` — builds `target/debug/librust.*` used by `godot/rust.gdextension`.
-- `cd rust && cargo test` — runs Rust unit tests.
-- `cd rust && cargo fmt --check` — verifies Rust formatting.
-- `/Applications/Godot.app/Contents/MacOS/godot --path godot` — run the project locally.
-- `/Applications/Godot.app/Contents/MacOS/godot --path godot --headless --quit` — quick headless startup check.
+`./scripts/run.ps1 -Build Debug` builds the Rust extension and launches Godot from `godot/`.
+
+`./scripts/run.ps1 -Build None -Editor` opens the editor without rebuilding Rust.
+
+`cd rust; cargo test --workspace` runs the Rust unit tests, including the inline tests in `gameplay_core`.
+
+`cd rust; cargo fmt --all` formats Rust code with standard `rustfmt`.
+
+`./scripts/export.ps1` produces a Windows export in `export/` and refreshes the LDtk stage manifest before packaging.
 
 ## Coding Style & Naming Conventions
-- Rust: follow `rustfmt` defaults (4-space indentation, snake_case functions/tests, PascalCase types).
-- GDScript: match existing style (`const` in uppercase, internal helpers prefixed with `_`, tabs in `.gd` files).
-- Keep deterministic logic in `rust/src/core/*`; keep Godot node lifecycle logic in `entity/`, `level/`, and `player/` modules.
+Rust follows `rustfmt` defaults: 4-space indentation, `snake_case` functions/modules, and `PascalCase` types. Keep pure rules and state transitions in `gameplay_core`; keep Godot-facing node registration, scene orchestration, and bridge code in the root crate.
+
+GDScript uses tabs, uppercase `const` names, and `_prefixed` helpers for internal functions. Match existing scene and asset naming such as `bridge_switch.tscn` and `Room_0_0.scn`.
 
 ## Testing Guidelines
-- Use inline Rust tests (`#[cfg(test)] mod tests`) near the code under test.
-- Prefer behavior-focused snake_case names, e.g. `transition_tick_requests_next_stage_when_timer_ends`.
-- For gameplay or scene changes, run `cargo test` and at least one Godot startup/playthrough check before submitting.
-- No formal coverage target exists; add tests for all new non-trivial logic.
+Prefer inline Rust tests with `#[cfg(test)] mod tests` next to the code they cover. New gameplay logic should land in `gameplay_core` with behavior-focused test names such as `push_dedup_applies_capacity`. For scene or import-pipeline changes, also run a local Godot launch check with `./scripts/run.ps1`.
 
 ## Commit & Pull Request Guidelines
-- Git history is currently minimal (`Initial commit`), so use short, imperative commit subjects.
-- Suggested commit format: `<area>: <change>` (example: `level: fix bridge activation state sync`).
-- PRs should include: purpose, key file paths changed, test commands run, linked issue (if any), and screenshot/GIF for visible gameplay updates.
+Current history uses short scoped subjects like `core: extract gameplay_core crate` and `export: support packaged Windows builds`. Follow `<area>: <imperative summary>`.
+
+Pull requests should state the gameplay or tooling change, list the commands run, link related issues, and include screenshots or short clips for visible Godot changes.
