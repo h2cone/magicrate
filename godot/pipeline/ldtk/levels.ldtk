@@ -390,7 +390,7 @@
 						},
 						{
 							"__identifier": "PushableCrate",
-							"__grid": [8,9],
+							"__grid": [7,9],
 							"__pivot": [0,0],
 							"__tags": [],
 							"__tile": null,
@@ -399,9 +399,9 @@
 							"width": 8,
 							"height": 8,
 							"defUid": 5,
-							"px": [64,72],
+							"px": [56,72],
 							"fieldInstances": [],
-							"__worldX": 64,
+							"__worldX": 56,
 							"__worldY": 72
 						}
 					]

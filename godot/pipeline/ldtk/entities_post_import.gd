@@ -142,7 +142,7 @@ func _ensure_player_spawn_node(
 		entity_layer: LDTKEntityLayer,
 		entity_data: Variant,
 		placeholder: Node2D,
-		owner: Node
+		owner: Node,
 ) -> void:
 	if placeholder:
 		placeholder.visible = false

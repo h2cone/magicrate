@@ -1,74 +1,64 @@
-use godot::classes::{INode, Node};
-use godot::prelude::*;
+use crate::{
+    Vec2,
+    undo_history::{pop_previous, push_dedup_with_cap},
+};
 
-use crate::core::undo_history;
+pub const DEFAULT_MAX_HISTORY: usize = 240;
 
-const DEFAULT_MAX_HISTORY: usize = 240;
-
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct BodySnapshot {
     pub name: String,
-    pub position: Vector2,
-    pub linear_velocity: Vector2,
+    pub position: Vec2,
+    pub linear_velocity: Vec2,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StageSnapshot {
-    pub player_position: Vector2,
-    pub player_velocity: Vector2,
+    pub player_position: Vec2,
+    pub player_velocity: Vec2,
     pub player_facing: i32,
     pub bodies: Vec<BodySnapshot>,
 }
 
-#[derive(GodotClass)]
-#[class(base=Node)]
-pub struct UndoService {
-    #[base]
-    base: Base<Node>,
+#[derive(Debug)]
+pub struct SnapshotHistory {
     history: Vec<StageSnapshot>,
+    max_len: usize,
 }
 
-#[godot_api]
-impl INode for UndoService {
-    fn init(base: Base<Node>) -> Self {
+impl SnapshotHistory {
+    pub fn new(max_len: usize) -> Self {
         Self {
-            base,
             history: Vec::new(),
+            max_len: max_len.max(1),
         }
-    }
-}
-
-#[godot_api]
-impl UndoService {
-    #[func]
-    pub fn clear_history(&mut self) {
-        self.history.clear();
-    }
-
-    #[func]
-    pub fn snapshot_count(&self) -> i64 {
-        self.history.len() as i64
     }
 
     pub fn clear(&mut self) {
         self.history.clear();
     }
 
+    pub fn snapshot_count(&self) -> usize {
+        self.history.len()
+    }
+
     pub fn push_snapshot(&mut self, snapshot: StageSnapshot) {
-        undo_history::push_dedup_with_cap(
-            &mut self.history,
-            snapshot,
-            DEFAULT_MAX_HISTORY,
-            snapshots_are_close,
-        );
+        let max_len = self.max_len.max(1);
+        push_dedup_with_cap(&mut self.history, snapshot, max_len, snapshots_are_close);
     }
 
     pub fn pop_previous_snapshot(&mut self) -> Option<StageSnapshot> {
-        undo_history::pop_previous(&mut self.history)
+        pop_previous(&mut self.history)
     }
 }
 
-fn snapshots_are_close(left: &StageSnapshot, right: &StageSnapshot) -> bool {
+impl Default for SnapshotHistory {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_HISTORY)
+    }
+}
+
+pub fn snapshots_are_close(left: &StageSnapshot, right: &StageSnapshot) -> bool {
     const EPS: f32 = 0.01;
 
     if left
@@ -104,19 +94,18 @@ fn snapshots_are_close(left: &StageSnapshot, right: &StageSnapshot) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use godot::builtin::Vector2;
-
-    use super::{BodySnapshot, StageSnapshot, snapshots_are_close};
+    use super::{BodySnapshot, SnapshotHistory, StageSnapshot, snapshots_are_close};
+    use crate::Vec2;
 
     fn sample_snapshot() -> StageSnapshot {
         StageSnapshot {
-            player_position: Vector2::new(8.0, 16.0),
-            player_velocity: Vector2::new(0.0, 0.0),
+            player_position: Vec2::new(8.0, 16.0),
+            player_velocity: Vec2::ZERO,
             player_facing: 1,
             bodies: vec![BodySnapshot {
                 name: "crate_a".to_string(),
-                position: Vector2::new(24.0, 16.0),
-                linear_velocity: Vector2::ZERO,
+                position: Vec2::new(24.0, 16.0),
+                linear_velocity: Vec2::ZERO,
             }],
         }
     }
@@ -146,5 +135,21 @@ mod tests {
         right.player_facing = -1;
 
         assert!(!snapshots_are_close(&left, &right));
+    }
+
+    #[test]
+    fn history_deduplicates_and_rewinds() {
+        let mut history = SnapshotHistory::default();
+
+        history.push_snapshot(sample_snapshot());
+        history.push_snapshot(sample_snapshot());
+
+        let mut moved = sample_snapshot();
+        moved.player_position.x += 8.0;
+        history.push_snapshot(moved.clone());
+
+        assert_eq!(history.snapshot_count(), 2);
+        assert_eq!(history.pop_previous_snapshot(), Some(sample_snapshot()));
+        assert_eq!(history.pop_previous_snapshot(), None);
     }
 }

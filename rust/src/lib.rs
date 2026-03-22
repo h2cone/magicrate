@@ -1,12 +1,12 @@
 use godot::prelude::*;
 
-mod core;
+mod config;
+mod core_bridge;
 mod entity;
 mod game;
 mod level;
 mod player;
 mod rooms;
-mod undo;
 
 struct MyExtension;
 

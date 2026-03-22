@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
-use godot::builtin::Vector2;
+use crate::Vec2;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PushChainPlan {
-    pub chain_cells: Vec<Vector2>,
+    pub chain_cells: Vec<Vec2>,
     pub push_y: f32,
 }
 
@@ -47,8 +47,8 @@ pub fn update_push_intent(
 }
 
 pub fn find_adjacent_row_target_y(
-    player_pos: Vector2,
-    crate_positions: &[Vector2],
+    player_pos: Vec2,
+    crate_positions: &[Vec2],
     cell_size: f32,
     max_gap: f32,
     max_dy: f32,
@@ -91,14 +91,14 @@ pub fn find_adjacent_row_target_y(
 }
 
 pub fn resolve_push_chain_plan<F>(
-    player_pos: Vector2,
+    player_pos: Vec2,
     dir_sign: i32,
-    crate_cells: &[Vector2],
+    crate_cells: &[Vec2],
     cell_size: f32,
     mut is_blocked: F,
 ) -> Option<PushChainPlan>
 where
-    F: FnMut(Vector2) -> bool,
+    F: FnMut(Vec2) -> bool,
 {
     if dir_sign != 1 && dir_sign != -1 {
         return None;
@@ -114,7 +114,7 @@ where
     };
 
     let occupancy = crate_cells_set(crate_cells, cell_size);
-    let mut target = Vector2::new(first_target_x, push_y);
+    let mut target = Vec2::new(first_target_x, push_y);
     let mut chain_cells = Vec::new();
 
     while occupancy.contains(&cell_key(target, cell_size)) {
@@ -140,14 +140,14 @@ pub fn snap_y(value: f32, cell_size: f32) -> f32 {
     (value / cell_size).floor() * cell_size
 }
 
-fn crate_cells_set(crate_cells: &[Vector2], cell_size: f32) -> HashSet<(i32, i32)> {
+fn crate_cells_set(crate_cells: &[Vec2], cell_size: f32) -> HashSet<(i32, i32)> {
     crate_cells
         .iter()
         .map(|cell| cell_key(*cell, cell_size))
         .collect()
 }
 
-fn cell_key(cell: Vector2, cell_size: f32) -> (i32, i32) {
+fn cell_key(cell: Vec2, cell_size: f32) -> (i32, i32) {
     (
         snap_coord(cell.x, cell_size) as i32,
         snap_y(cell.y, cell_size) as i32,
@@ -156,7 +156,7 @@ fn cell_key(cell: Vector2, cell_size: f32) -> (i32, i32) {
 
 #[cfg(test)]
 mod tests {
-    use godot::builtin::Vector2;
+    use crate::Vec2;
 
     use super::{
         PushIntentProgress, direction_from_axis, find_adjacent_row_target_y,
@@ -188,11 +188,11 @@ mod tests {
 
     #[test]
     fn find_adjacent_row_target_prefers_smallest_gap_then_vertical_distance() {
-        let player = Vector2::new(8.0, 16.0);
+        let player = Vec2::new(8.0, 16.0);
         let crates = vec![
-            Vector2::new(20.0, 16.0),
-            Vector2::new(16.0, 17.0),
-            Vector2::new(0.0, 16.0),
+            Vec2::new(20.0, 16.0),
+            Vec2::new(16.0, 17.0),
+            Vec2::new(0.0, 16.0),
         ];
 
         let target = find_adjacent_row_target_y(player, &crates, 8.0, 2.0, 8.0);
@@ -202,8 +202,8 @@ mod tests {
 
     #[test]
     fn find_adjacent_row_target_returns_none_for_distant_crates() {
-        let player = Vector2::new(8.0, 16.0);
-        let crates = vec![Vector2::new(40.0, 40.0)];
+        let player = Vec2::new(8.0, 16.0);
+        let crates = vec![Vec2::new(40.0, 40.0)];
 
         let target = find_adjacent_row_target_y(player, &crates, 8.0, 2.0, 2.0);
 
@@ -212,8 +212,8 @@ mod tests {
 
     #[test]
     fn resolve_push_chain_plan_collects_contiguous_cells() {
-        let player = Vector2::new(8.0, 16.0);
-        let crates = vec![Vector2::new(16.0, 16.0), Vector2::new(24.0, 16.0)];
+        let player = Vec2::new(8.0, 16.0);
+        let crates = vec![Vec2::new(16.0, 16.0), Vec2::new(24.0, 16.0)];
 
         let plan = resolve_push_chain_plan(player, 1, &crates, 8.0, |_target| false).unwrap();
 
@@ -223,8 +223,8 @@ mod tests {
 
     #[test]
     fn resolve_push_chain_plan_returns_none_if_front_is_blocked() {
-        let player = Vector2::new(8.0, 16.0);
-        let crates = vec![Vector2::new(16.0, 16.0)];
+        let player = Vec2::new(8.0, 16.0);
+        let crates = vec![Vec2::new(16.0, 16.0)];
 
         let plan = resolve_push_chain_plan(player, 1, &crates, 8.0, |target| {
             (target.x - 24.0).abs() <= 0.01 && (target.y - 16.0).abs() <= 0.01
@@ -235,8 +235,8 @@ mod tests {
 
     #[test]
     fn resolve_push_chain_plan_returns_none_without_adjacent_crate() {
-        let player = Vector2::new(8.0, 16.0);
-        let crates = vec![Vector2::new(40.0, 16.0)];
+        let player = Vec2::new(8.0, 16.0);
+        let crates = vec![Vec2::new(40.0, 16.0)];
 
         let plan = resolve_push_chain_plan(player, 1, &crates, 8.0, |_target| false);
 

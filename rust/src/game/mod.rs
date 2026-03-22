@@ -1,9 +1,10 @@
+use gameplay_core::game_flow::GameState;
 use godot::{
     classes::{INode, Input, Node},
     prelude::*,
 };
 
-use crate::{core::game_flow::GameState, level::LevelRuntime};
+use crate::{config::SCENE_CONTRACT, level::LevelRuntime};
 
 #[derive(GodotClass)]
 #[class(base=Node)]
@@ -45,9 +46,9 @@ impl INode for Game {
     fn process(&mut self, delta: f64) {
         let input = Input::singleton();
 
-        let restart_pressed = input.is_action_just_pressed("act_restart");
-        let undo_pressed = input.is_action_just_pressed("act_undo");
-        let jump_pressed = input.is_action_just_pressed("act_jump");
+        let restart_pressed = input.is_action_just_pressed(SCENE_CONTRACT.actions.restart);
+        let undo_pressed = input.is_action_just_pressed(SCENE_CONTRACT.actions.undo);
+        let jump_pressed = input.is_action_just_pressed(SCENE_CONTRACT.actions.jump);
 
         if self.state.restart_requested(restart_pressed, jump_pressed)
             && self.level_runtime.bind_mut().restart_current_stage()

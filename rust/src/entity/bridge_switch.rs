@@ -1,7 +1,8 @@
+use gameplay_core::activation::{ActivationChange, ActivationCounter};
 use godot::classes::{Area2D, IArea2D};
 use godot::prelude::*;
 
-use crate::core::activation::{ActivationChange, ActivationCounter};
+use crate::config::SCENE_CONTRACT;
 
 #[derive(GodotClass)]
 #[class(base=Area2D)]
@@ -57,6 +58,7 @@ impl BridgeSwitch {
     }
 
     fn is_trigger_body(body: &Gd<Node2D>) -> bool {
-        body.is_in_group("player") || body.is_in_group("crate")
+        body.is_in_group(SCENE_CONTRACT.group_player)
+            || body.is_in_group(SCENE_CONTRACT.group_crate)
     }
 }

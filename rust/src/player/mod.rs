@@ -1,3 +1,7 @@
+use gameplay_core::{
+    Vec2,
+    player_logic::{self, PushIntentProgress},
+};
 use godot::{
     classes::{
         CharacterBody2D, CollisionShape2D, ICharacterBody2D, Input, Node, Node2D, RectangleShape2D,
@@ -6,12 +10,14 @@ use godot::{
     prelude::*,
 };
 
-use crate::core::player_logic::{self, PushIntentProgress};
+use crate::{
+    config::SCENE_CONTRACT,
+    core_bridge::{core_vec, godot_vec},
+    level::scene_ops,
+};
 
-const PLAYER_CELL_SIZE: f32 = 8.0;
 const PUSH_COOLDOWN_FRAMES: i32 = 8;
 const PUSH_RESIST_FRAMES: i32 = 6;
-const IG_RULES_LAYER_PATH: &str = "IG_Rules-values";
 const WALK_STEP: f32 = 1.0;
 const VERTICAL_STEP: f32 = 2.0;
 const JUMP_COUNTER_START: i32 = 49;
@@ -59,7 +65,7 @@ impl ICharacterBody2D for PlayerController {
     }
 
     fn ready(&mut self) {
-        self.base_mut().add_to_group("player");
+        self.base_mut().add_to_group(SCENE_CONTRACT.group_player);
     }
 
     fn physics_process(&mut self, _delta: f64) {
@@ -75,13 +81,13 @@ impl ICharacterBody2D for PlayerController {
         let mut moved_horizontally = false;
 
         if self.input_enabled {
-            axis = input.get_axis("act_left", "act_right");
+            axis = input.get_axis(SCENE_CONTRACT.actions.left, SCENE_CONTRACT.actions.right);
 
             if axis.abs() > 0.01 {
                 self.facing = if axis > 0.0 { 1 } else { -1 };
             }
 
-            if input.is_action_just_pressed("act_jump")
+            if input.is_action_just_pressed(SCENE_CONTRACT.actions.jump)
                 && self.jump_counter == 0
                 && self.has_floor_support_at(self.base().get_position(), &context)
             {
@@ -222,22 +228,22 @@ impl PlayerController {
         let player_pos = self.base().get_position();
 
         let tree = self.base().get_tree();
-        let crates: Array<Gd<Node>> = tree.get_nodes_in_group("crate");
-        let crate_positions: Vec<Vector2> = crates
+        let crates: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
+        let crate_positions: Vec<Vec2> = crates
             .iter_shared()
             .filter_map(|node| {
                 node.try_cast::<RigidBody2D>()
                     .ok()
-                    .map(|body| Self::crate_top_left(&body))
+                    .map(|body| core_vec(Self::crate_top_left(&body)))
             })
             .collect();
 
         let Some(target_y) = player_logic::find_adjacent_row_target_y(
-            player_pos,
+            core_vec(player_pos),
             &crate_positions,
-            PLAYER_CELL_SIZE,
+            SCENE_CONTRACT.cell_size,
             2.0,
-            PLAYER_CELL_SIZE,
+            SCENE_CONTRACT.cell_size,
         ) else {
             return;
         };
@@ -256,7 +262,7 @@ impl PlayerController {
         let rules_tilemap = Self::find_rules_tilemap(&self.base());
         let tree = self.base().get_tree();
 
-        let crate_nodes: Array<Gd<Node>> = tree.get_nodes_in_group("crate");
+        let crate_nodes: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
         let mut crate_cells = Vec::new();
         for node in crate_nodes.iter_shared() {
             let Ok(body) = node.try_cast::<RigidBody2D>() else {
@@ -265,7 +271,8 @@ impl PlayerController {
             crate_cells.push(Self::crate_top_left(&body));
         }
 
-        let bridge_nodes: Array<Gd<Node>> = tree.get_nodes_in_group("bridge_tile");
+        let bridge_nodes: Array<Gd<Node>> =
+            tree.get_nodes_in_group(SCENE_CONTRACT.group_bridge_tile);
         let mut bridge_solids = Vec::new();
         for node in bridge_nodes.iter_shared() {
             let Ok(body) = node.try_cast::<StaticBody2D>() else {
@@ -275,7 +282,9 @@ impl PlayerController {
                 continue;
             }
 
-            let Some(shape_node) = body.get_node_or_null("CollisionShape2D") else {
+            let Some(shape_node) =
+                body.get_node_or_null(SCENE_CONTRACT.bridge_collision_shape_path)
+            else {
                 continue;
             };
             let Ok(shape_node) = shape_node.try_cast::<CollisionShape2D>() else {
@@ -306,18 +315,18 @@ impl PlayerController {
     fn find_rules_tilemap(player: &CharacterBody2D) -> Option<Gd<TileMapLayer>> {
         let parent = player.get_parent()?;
         let stage = parent.try_cast::<Node2D>().ok()?;
-        let tile_node = stage.get_node_or_null(IG_RULES_LAYER_PATH)?;
+        let tile_node = stage.get_node_or_null(SCENE_CONTRACT.rules_layer_path)?;
         tile_node.try_cast::<TileMapLayer>().ok()
     }
 
     fn has_floor_support_at(&self, position: Vector2, context: &CollisionContext) -> bool {
         Self::is_solid_point_for_player(
-            Vector2::new(position.x + 1.0, position.y + PLAYER_CELL_SIZE),
+            Vector2::new(position.x + 1.0, position.y + SCENE_CONTRACT.cell_size),
             context,
         ) || Self::is_solid_point_for_player(
             Vector2::new(
-                position.x + PLAYER_CELL_SIZE - 2.0,
-                position.y + PLAYER_CELL_SIZE,
+                position.x + SCENE_CONTRACT.cell_size - 2.0,
+                position.y + SCENE_CONTRACT.cell_size,
             ),
             context,
         )
@@ -326,7 +335,7 @@ impl PlayerController {
     fn has_ceiling_block_at(&self, position: Vector2, context: &CollisionContext) -> bool {
         Self::is_solid_point_for_player(Vector2::new(position.x + 1.0, position.y), context)
             || Self::is_solid_point_for_player(
-                Vector2::new(position.x + PLAYER_CELL_SIZE - 2.0, position.y),
+                Vector2::new(position.x + SCENE_CONTRACT.cell_size - 2.0, position.y),
                 context,
             )
     }
@@ -344,17 +353,17 @@ impl PlayerController {
     fn is_collision_at(position: Vector2, context: &CollisionContext) -> bool {
         Self::is_solid_point_for_player(Vector2::new(position.x, position.y), context)
             || Self::is_solid_point_for_player(
-                Vector2::new(position.x + PLAYER_CELL_SIZE - 1.0, position.y),
+                Vector2::new(position.x + SCENE_CONTRACT.cell_size - 1.0, position.y),
                 context,
             )
             || Self::is_solid_point_for_player(
-                Vector2::new(position.x, position.y + PLAYER_CELL_SIZE - 1.0),
+                Vector2::new(position.x, position.y + SCENE_CONTRACT.cell_size - 1.0),
                 context,
             )
             || Self::is_solid_point_for_player(
                 Vector2::new(
-                    position.x + PLAYER_CELL_SIZE - 1.0,
-                    position.y + PLAYER_CELL_SIZE - 1.0,
+                    position.x + SCENE_CONTRACT.cell_size - 1.0,
+                    position.y + SCENE_CONTRACT.cell_size - 1.0,
                 ),
                 context,
             )
@@ -371,29 +380,19 @@ impl PlayerController {
             return false;
         };
 
-        Self::rule_at_point(tilemap, point) == 1
+        SCENE_CONTRACT.player_rule_is_solid(Self::rule_at_point(tilemap, point))
     }
 
     fn rule_at_point(tilemap: &Gd<TileMapLayer>, point: Vector2) -> i32 {
-        let local = point - tilemap.get_position();
-        let cell = Vector2i::new(
-            (local.x / PLAYER_CELL_SIZE).floor() as i32,
-            (local.y / PLAYER_CELL_SIZE).floor() as i32,
-        );
-        let atlas_coords = tilemap.get_cell_atlas_coords(cell);
-        if atlas_coords.x < 0 {
-            return 0;
-        }
-
-        atlas_coords.x + 1
+        scene_ops::rule_at_point(tilemap, point, SCENE_CONTRACT.cell_size)
     }
 
     fn is_point_inside_cells(point: Vector2, cells: &[Vector2]) -> bool {
         for top_left in cells {
             if point.x >= top_left.x
-                && point.x < top_left.x + PLAYER_CELL_SIZE
+                && point.x < top_left.x + SCENE_CONTRACT.cell_size
                 && point.y >= top_left.y
-                && point.y < top_left.y + PLAYER_CELL_SIZE
+                && point.y < top_left.y + SCENE_CONTRACT.cell_size
             {
                 return true;
             }
@@ -458,15 +457,16 @@ impl PlayerController {
         let dir = dir_sign as f32;
         for mut body in chain.into_iter().rev() {
             let top_left = Self::crate_top_left(&body);
-            let next_top_left = Vector2::new(top_left.x + dir * PLAYER_CELL_SIZE, top_left.y);
-            body.set_position(Self::crate_center_from_top_left(next_top_left));
+            let next_top_left =
+                Vector2::new(top_left.x + dir * SCENE_CONTRACT.cell_size, top_left.y);
+            body.set_position(next_top_left);
             body.set_linear_velocity(Vector2::ZERO);
             body.set_angular_velocity(0.0);
             body.set_sleeping(true);
         }
 
         let mut position = self.base().get_position();
-        position.x = Self::snap_coord(position.x + dir * PLAYER_CELL_SIZE);
+        position.x = Self::snap_coord(position.x + dir * SCENE_CONTRACT.cell_size);
         position.y = push_y;
         self.base_mut().set_position(position);
 
@@ -482,25 +482,25 @@ impl PlayerController {
         context: &CollisionContext,
     ) -> Option<(Vec<Gd<RigidBody2D>>, f32)> {
         let tree = self.base().get_tree();
-        let crates: Array<Gd<Node>> = tree.get_nodes_in_group("crate");
+        let crates: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
         if crates.is_empty() {
             return None;
         }
 
-        let crate_cells: Vec<Vector2> = crates
+        let crate_cells: Vec<Vec2> = crates
             .iter_shared()
             .filter_map(|node| {
                 node.try_cast::<RigidBody2D>()
                     .ok()
-                    .map(|body| Self::crate_top_left(&body))
+                    .map(|body| core_vec(Self::crate_top_left(&body)))
             })
             .collect();
 
         let plan = player_logic::resolve_push_chain_plan(
-            self.base().get_position(),
+            core_vec(self.base().get_position()),
             dir_sign,
             &crate_cells,
-            PLAYER_CELL_SIZE,
+            SCENE_CONTRACT.cell_size,
             |target_top_left| {
                 Self::is_rule_blocking_for_crate(&context.rules_tilemap, target_top_left)
                     || Self::is_bridge_blocking_for_crate(&context.bridge_solids, target_top_left)
@@ -513,7 +513,7 @@ impl PlayerController {
 
     fn chain_cells_to_bodies(
         crates: &Array<Gd<Node>>,
-        chain_cells: &[Vector2],
+        chain_cells: &[Vec2],
     ) -> Option<Vec<Gd<RigidBody2D>>> {
         let mut chain = Vec::with_capacity(chain_cells.len());
         for &cell in chain_cells {
@@ -524,14 +524,14 @@ impl PlayerController {
 
     fn find_crate_at_cell(
         crates: &Array<Gd<Node>>,
-        target_top_left: Vector2,
+        target_top_left: Vec2,
     ) -> Option<Gd<RigidBody2D>> {
         for node in crates.iter_shared() {
             let Ok(body) = node.try_cast::<RigidBody2D>() else {
                 continue;
             };
 
-            let crate_top_left = Self::crate_top_left(&body);
+            let crate_top_left = core_vec(Self::crate_top_left(&body));
             if (crate_top_left.x - target_top_left.x).abs() <= 0.5
                 && (crate_top_left.y - target_top_left.y).abs() <= 0.5
             {
@@ -544,28 +544,35 @@ impl PlayerController {
 
     fn is_rule_blocking_for_crate(
         rules_tilemap: &Option<Gd<TileMapLayer>>,
-        target_top_left: Vector2,
+        target_top_left: Vec2,
     ) -> bool {
         let Some(tilemap) = rules_tilemap else {
             return false;
         };
 
+        let target_top_left = godot_vec(target_top_left);
         let rule_value = Self::rule_at_point(tilemap, target_top_left + Vector2::new(0.1, 0.1));
-        rule_value == 1 || rule_value == 2
+        SCENE_CONTRACT.crate_rule_is_solid(rule_value)
     }
 
-    fn is_bridge_blocking_for_crate(bridge_solids: &[Rect2], target_top_left: Vector2) -> bool {
+    fn is_bridge_blocking_for_crate(bridge_solids: &[Rect2], target_top_left: Vec2) -> bool {
+        let target_top_left = godot_vec(target_top_left);
+
         Self::is_point_inside_rects(target_top_left, bridge_solids)
             || Self::is_point_inside_rects(
-                target_top_left + Vector2::new(PLAYER_CELL_SIZE - 1.0, 0.0),
+                target_top_left + Vector2::new(SCENE_CONTRACT.cell_size - 1.0, 0.0),
                 bridge_solids,
             )
             || Self::is_point_inside_rects(
-                target_top_left + Vector2::new(0.0, PLAYER_CELL_SIZE - 1.0),
+                target_top_left + Vector2::new(0.0, SCENE_CONTRACT.cell_size - 1.0),
                 bridge_solids,
             )
             || Self::is_point_inside_rects(
-                target_top_left + Vector2::new(PLAYER_CELL_SIZE - 1.0, PLAYER_CELL_SIZE - 1.0),
+                target_top_left
+                    + Vector2::new(
+                        SCENE_CONTRACT.cell_size - 1.0,
+                        SCENE_CONTRACT.cell_size - 1.0,
+                    ),
                 bridge_solids,
             )
     }
@@ -575,15 +582,11 @@ impl PlayerController {
         Vector2::new(Self::snap_coord(pos.x), Self::snap_y(pos.y))
     }
 
-    fn crate_center_from_top_left(top_left: Vector2) -> Vector2 {
-        top_left
-    }
-
     fn snap_coord(value: f32) -> f32 {
-        player_logic::snap_coord(value, PLAYER_CELL_SIZE)
+        player_logic::snap_coord(value, SCENE_CONTRACT.cell_size)
     }
 
     fn snap_y(value: f32) -> f32 {
-        player_logic::snap_y(value, PLAYER_CELL_SIZE)
+        player_logic::snap_y(value, SCENE_CONTRACT.cell_size)
     }
 }

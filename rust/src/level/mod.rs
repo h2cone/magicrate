@@ -1,36 +1,34 @@
-use std::collections::{HashMap, HashSet};
+mod catalog;
+pub(crate) mod scene_ops;
+mod snapshot_io;
 
+use std::collections::HashSet;
+
+use gameplay_core::{
+    crate_runtime, player_logic,
+    snapshot::{SnapshotHistory, StageSnapshot},
+};
 use godot::{
-    classes::file_access::ModeFlags,
-    classes::{
-        CharacterBody2D, DirAccess, INode2D, Node, Node2D, ProjectSettings, ResourceLoader,
-        RigidBody2D, TileMapLayer,
-    },
+    classes::{CharacterBody2D, INode2D, Node, Node2D, RigidBody2D, TileMapLayer},
     prelude::*,
-    tools::GFile,
 };
 
 use crate::{
-    core::{crate_runtime, player_logic, stage_paths},
+    config::SCENE_CONTRACT,
+    core_bridge::{core_vec, godot_vec},
     entity::{bridge_switch::BridgeSwitch, bridge_tile::BridgeTile, goal_petal::GoalPetal},
     player::PlayerController,
     rooms::StageLoader,
-    undo::{BodySnapshot, StageSnapshot, UndoService},
 };
 
-const DEFAULT_PLAYER_SCENE: &str = "res://player/player.tscn";
-const DEFAULT_STAGE_DIR: &str = "res://pipeline/ldtk/levels";
-const DEFAULT_STAGE_MANIFEST: &str = "res://pipeline/ldtk/stage_manifest.txt";
-const ENTITY_LAYER_NAME: &str = "Entities";
-const PLAYER_SPAWN_PATH: &str = "Entities/PlayerSpawn";
-const PLACEHOLDER_PLAYER_SPAWN: &str = "PlayerSpawn";
-const PLACEHOLDER_PUSHABLE_CRATE: &str = "PushableCrate";
-const PLACEHOLDER_GOAL_PETAL: &str = "GoalPetal";
-const PLACEHOLDER_BRIDGE_SWITCH: &str = "BridgeSwitch";
-const PLACEHOLDER_BRIDGE_TILE: &str = "BridgeTile";
-const IG_RULES_LAYER_PATH: &str = "IG_Rules-values";
-const GRID_SIZE: f32 = 8.0;
-const BOX_FALL_SPEED: f32 = 2.0;
+use self::{
+    catalog::discover_stage_paths,
+    scene_ops::{
+        center_stage_in_viewport, cleanup_entity_placeholders, find_spawn_position,
+        normalize_crate_spawn_positions, snap_to_grid, target_viewport_size,
+    },
+    snapshot_io::{apply_stage_snapshot, build_stage_snapshot},
+};
 
 #[derive(GodotClass)]
 #[class(base=Node2D)]
@@ -52,7 +50,7 @@ pub struct LevelRuntime {
 
     current_stage: Option<Gd<Node2D>>,
     player: Option<Gd<CharacterBody2D>>,
-    undo_service: Option<Gd<UndoService>>,
+    undo_history: SnapshotHistory,
 }
 
 #[godot_api]
@@ -71,20 +69,16 @@ impl INode2D for LevelRuntime {
             player_died_emitted: false,
             current_stage: None,
             player: None,
-            undo_service: None,
+            undo_history: SnapshotHistory::default(),
         }
     }
 
     fn ready(&mut self) {
-        let undo_service = Gd::<UndoService>::from_init_fn(UndoService::init);
-        self.base_mut().add_child(&undo_service);
-        self.undo_service = Some(undo_service);
-
-        self.stage_paths = Self::discover_stage_paths(DEFAULT_STAGE_DIR);
+        self.stage_paths = discover_stage_paths(&SCENE_CONTRACT);
         if self.stage_paths.is_empty() {
             godot_warn!(
                 "[LevelRuntime] no Room_*.scn/tscn found in {}.",
-                DEFAULT_STAGE_DIR
+                SCENE_CONTRACT.stage_dir
             );
             return;
         }
@@ -144,8 +138,7 @@ impl LevelRuntime {
 
         stage_node.set_name(&format!("Stage{}", index + 1));
         self.base_mut().add_child(&stage_node);
-        let viewport_size = Self::target_viewport_size();
-        Self::center_stage_in_viewport(&mut stage_node, viewport_size);
+        center_stage_in_viewport(&mut stage_node, target_viewport_size(&SCENE_CONTRACT));
 
         self.current_stage = Some(stage_node.clone());
         self.stage_index = index as i32;
@@ -160,12 +153,10 @@ impl LevelRuntime {
             godot_error!("[LevelRuntime] player spawn failed in stage {}", index + 1);
             return false;
         }
-        Self::cleanup_entity_placeholders(&mut stage_node);
-        Self::normalize_crate_spawn_positions(&self.base());
+        cleanup_entity_placeholders(&mut stage_node, &SCENE_CONTRACT);
+        normalize_crate_spawn_positions(&self.base(), &SCENE_CONTRACT);
 
-        if let Some(ref mut undo_service) = self.undo_service {
-            undo_service.bind_mut().clear();
-        }
+        self.undo_history.clear();
         self.capture_snapshot();
 
         self.signals().stage_loaded().emit(index + 1);
@@ -190,11 +181,7 @@ impl LevelRuntime {
 
     #[func]
     pub fn request_undo(&mut self) -> bool {
-        let Some(ref mut undo_service) = self.undo_service else {
-            return false;
-        };
-
-        let Some(snapshot) = undo_service.bind_mut().pop_previous_snapshot() else {
+        let Some(snapshot) = self.undo_history.pop_previous_snapshot() else {
             return false;
         };
 
@@ -233,10 +220,10 @@ impl LevelRuntime {
     }
 
     fn spawn_player_for_stage(&mut self, stage: &mut Gd<Node2D>) -> bool {
-        let Some(scene) = StageLoader::load_scene(DEFAULT_PLAYER_SCENE) else {
+        let Some(scene) = StageLoader::load_scene(SCENE_CONTRACT.player_scene) else {
             godot_error!(
                 "[LevelRuntime] missing player scene: {}",
-                DEFAULT_PLAYER_SCENE
+                SCENE_CONTRACT.player_scene
             );
             return false;
         };
@@ -250,14 +237,15 @@ impl LevelRuntime {
             return false;
         };
 
-        let Some(spawn_pos) = Self::find_spawn_position(stage) else {
+        let Some(spawn_pos) = find_spawn_position(stage, &SCENE_CONTRACT) else {
             godot_error!(
-                "[LevelRuntime] missing required Node2D `Entities/PlayerSpawn` in stage {}",
+                "[LevelRuntime] missing required Node2D `{}` in stage {}",
+                SCENE_CONTRACT.player_spawn_path,
                 stage.get_name()
             );
             return false;
         };
-        player.set_position(Self::snap_to_grid(spawn_pos));
+        player.set_position(snap_to_grid(spawn_pos, SCENE_CONTRACT.cell_size));
         stage.add_child(&player);
 
         if let Ok(player_script) = player.clone().try_cast::<PlayerController>() {
@@ -272,78 +260,10 @@ impl LevelRuntime {
         true
     }
 
-    fn find_spawn_position(stage: &Gd<Node2D>) -> Option<Vector2> {
-        let _ = stage.get_node_or_null(ENTITY_LAYER_NAME)?;
-        let spawn_node = stage.get_node_or_null(PLAYER_SPAWN_PATH)?;
-        let spawn = spawn_node.try_cast::<Node2D>().ok()?;
-        Some(spawn.get_position())
-    }
-
-    fn cleanup_entity_placeholders(stage: &mut Gd<Node2D>) {
-        let Some(entities_node) = stage.get_node_or_null(ENTITY_LAYER_NAME) else {
-            return;
-        };
-        let Ok(mut entities) = entities_node.try_cast::<Node>() else {
-            return;
-        };
-
-        let children: Array<Gd<Node>> = entities.get_children();
-        let mut to_remove: Vec<Gd<Node2D>> = Vec::new();
-        for node in children.iter_shared() {
-            let Ok(node2d) = node.try_cast::<Node2D>() else {
-                continue;
-            };
-
-            let identifier = node2d
-                .get("identifier")
-                .try_to::<GString>()
-                .ok()
-                .map(|value| value.to_string())
-                .unwrap_or_default();
-            let should_hide = identifier == PLACEHOLDER_PLAYER_SPAWN
-                || identifier == PLACEHOLDER_PUSHABLE_CRATE
-                || identifier == PLACEHOLDER_GOAL_PETAL
-                || identifier == PLACEHOLDER_BRIDGE_SWITCH
-                || identifier == PLACEHOLDER_BRIDGE_TILE
-                || node2d
-                    .get_script()
-                    .map(|script| script.get_path().to_string())
-                    .is_some_and(|path| {
-                        path.ends_with("addons/ldtk-importer/src/components/ldtk-entity.gd")
-                    });
-            if should_hide {
-                to_remove.push(node2d);
-            }
-        }
-
-        for mut node2d in to_remove {
-            node2d.set_visible(false);
-            let mut node = node2d.clone().upcast::<Node>();
-            entities.remove_child(&node);
-            node.queue_free();
-        }
-    }
-
-    fn normalize_crate_spawn_positions(root: &Node2D) {
-        let tree = root.get_tree();
-        let crate_nodes: Array<Gd<Node>> = tree.get_nodes_in_group("crate");
-        for node in crate_nodes.iter_shared() {
-            let Ok(mut body) = node.try_cast::<RigidBody2D>() else {
-                continue;
-            };
-
-            let pos = body.get_position();
-            body.set_position(Self::snap_to_grid(pos));
-            body.set_linear_velocity(Vector2::ZERO);
-            body.set_angular_velocity(0.0);
-            body.set_sleeping(true);
-        }
-    }
-
     fn update_bridge_state(&mut self) {
         let tree = self.base().get_tree();
 
-        let switches: Array<Gd<Node>> = tree.get_nodes_in_group("bridge_switch");
+        let switches: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_bridge_switch);
         let mut any_active = false;
         for node in switches.iter_shared() {
             if let Ok(switch) = node.try_cast::<BridgeSwitch>() {
@@ -360,7 +280,7 @@ impl LevelRuntime {
 
         self.bridge_active = any_active;
 
-        let tiles: Array<Gd<Node>> = tree.get_nodes_in_group("bridge_tile");
+        let tiles: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_bridge_tile);
         for node in tiles.iter_shared() {
             if let Ok(mut tile) = node.try_cast::<BridgeTile>() {
                 tile.bind_mut().set_active(any_active);
@@ -373,7 +293,7 @@ impl LevelRuntime {
             return false;
         };
 
-        let Some(tile_node) = stage.get_node_or_null(IG_RULES_LAYER_PATH) else {
+        let Some(tile_node) = stage.get_node_or_null(SCENE_CONTRACT.rules_layer_path) else {
             return false;
         };
         let Ok(tilemap) = tile_node.try_cast::<TileMapLayer>() else {
@@ -381,13 +301,13 @@ impl LevelRuntime {
         };
 
         let tree = self.base().get_tree();
-        let crate_nodes: Array<Gd<Node>> = tree.get_nodes_in_group("crate");
+        let crate_nodes: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
         if crate_nodes.is_empty() {
             return false;
         }
 
         let mut bodies: Vec<Gd<RigidBody2D>> = Vec::new();
-        let mut positions: Vec<Vector2> = Vec::new();
+        let mut positions = Vec::new();
 
         for node in crate_nodes.iter_shared() {
             let Ok(mut body) = node.try_cast::<RigidBody2D>() else {
@@ -396,20 +316,22 @@ impl LevelRuntime {
 
             let pos = Self::stabilize_crate_body(&mut body);
             bodies.push(body);
-            positions.push(pos);
+            positions.push(core_vec(pos));
         }
 
         if bodies.is_empty() {
             return false;
         }
 
-        let plan =
-            crate_runtime::compute_plan(&positions, GRID_SIZE, BOX_FALL_SPEED, |pos, occupancy| {
-                Self::crate_has_support(&tilemap, occupancy, pos)
-            });
+        let plan = crate_runtime::compute_plan(
+            &positions,
+            SCENE_CONTRACT.cell_size,
+            SCENE_CONTRACT.box_fall_speed,
+            |pos, occupancy| Self::crate_has_support(&tilemap, occupancy, pos),
+        );
 
         for (mut body, next_pos) in bodies.into_iter().zip(plan.next_positions.into_iter()) {
-            body.set_position(next_pos);
+            body.set_position(godot_vec(next_pos));
         }
 
         plan.moved
@@ -417,7 +339,7 @@ impl LevelRuntime {
 
     fn stabilize_crate_body(body: &mut Gd<RigidBody2D>) -> Vector2 {
         let mut pos = body.get_position();
-        pos.x = Self::snap_grid(pos.x);
+        pos.x = crate_runtime::snap_grid(pos.x, SCENE_CONTRACT.cell_size);
         body.set_position(pos);
         body.set_linear_velocity(Vector2::ZERO);
         body.set_angular_velocity(0.0);
@@ -430,37 +352,30 @@ impl LevelRuntime {
     fn crate_has_support(
         tilemap: &Gd<TileMapLayer>,
         occupancy: &HashSet<(i32, i32)>,
-        pos: Vector2,
+        pos: gameplay_core::Vec2,
     ) -> bool {
         let below_cell = (
-            Self::snap_grid(pos.x) as i32,
-            Self::snap_grid(pos.y) as i32 + GRID_SIZE as i32,
+            crate_runtime::snap_grid(pos.x, SCENE_CONTRACT.cell_size) as i32,
+            crate_runtime::snap_grid(pos.y, SCENE_CONTRACT.cell_size) as i32
+                + SCENE_CONTRACT.cell_size as i32,
         );
         if occupancy.contains(&below_cell) {
             return true;
         }
 
-        let below_left = Vector2::new(pos.x, pos.y + GRID_SIZE);
-        let below_right = Vector2::new(pos.x + GRID_SIZE - 1.0, pos.y + GRID_SIZE);
+        let below_left = Vector2::new(pos.x, pos.y + SCENE_CONTRACT.cell_size);
+        let below_right = Vector2::new(
+            pos.x + SCENE_CONTRACT.cell_size - 1.0,
+            pos.y + SCENE_CONTRACT.cell_size,
+        );
 
         Self::is_solid_for_crate(tilemap, below_left)
             || Self::is_solid_for_crate(tilemap, below_right)
     }
 
     fn is_solid_for_crate(tilemap: &Gd<TileMapLayer>, world_point: Vector2) -> bool {
-        let local = world_point - tilemap.get_position();
-        let cell = tilemap.local_to_map(local + Vector2::new(0.1, 0.1));
-        let atlas_coords = tilemap.get_cell_atlas_coords(cell);
-        if atlas_coords.x < 0 {
-            return false;
-        }
-
-        let rule = atlas_coords.x + 1;
-        rule == 1 || rule == 2
-    }
-
-    fn snap_grid(value: f32) -> f32 {
-        crate_runtime::snap_grid(value, GRID_SIZE)
+        let rule = scene_ops::rule_at_point(tilemap, world_point, SCENE_CONTRACT.cell_size);
+        SCENE_CONTRACT.crate_rule_is_solid(rule)
     }
 
     fn check_goal_state(&mut self) {
@@ -470,7 +385,7 @@ impl LevelRuntime {
 
         let tree = self.base().get_tree();
 
-        let goals: Array<Gd<Node>> = tree.get_nodes_in_group("goal_petal");
+        let goals: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_goal_petal);
         let mut found_goal = false;
         let mut all_active = true;
 
@@ -500,7 +415,7 @@ impl LevelRuntime {
             return;
         };
 
-        let fell_out = player.get_position().y > 300.0;
+        let fell_out = player.get_position().y > SCENE_CONTRACT.player_fall_death_y;
         let touched_hazard = self.player_touches_hazard(player.get_global_position());
         if fell_out || touched_hazard {
             self.player_died_emitted = true;
@@ -511,7 +426,7 @@ impl LevelRuntime {
 
     fn player_touches_hazard(&self, player_global_pos: Vector2) -> bool {
         let tree = self.base().get_tree();
-        let markers: Array<Gd<Node>> = tree.get_nodes_in_group("ig_hazard_marker");
+        let markers: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_hazard_marker);
 
         for node in markers.iter_shared() {
             let Ok(marker) = node.try_cast::<Node2D>() else {
@@ -519,7 +434,10 @@ impl LevelRuntime {
             };
 
             let marker_pos = marker.get_global_position();
-            let half = Vector2::new(4.0, 4.0);
+            let half = Vector2::new(
+                SCENE_CONTRACT.cell_size * 0.5,
+                SCENE_CONTRACT.cell_size * 0.5,
+            );
             if (player_global_pos.x - marker_pos.x).abs() <= half.x
                 && (player_global_pos.y - marker_pos.y).abs() <= half.y
             {
@@ -554,20 +472,20 @@ impl LevelRuntime {
         let player_pos = player.get_position();
 
         let tree = self.base().get_tree();
-        let crates: Array<Gd<Node>> = tree.get_nodes_in_group("crate");
-        let crate_positions: Vec<Vector2> = crates
+        let crates: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
+        let crate_positions: Vec<_> = crates
             .iter_shared()
             .filter_map(|node| {
                 node.try_cast::<RigidBody2D>()
                     .ok()
-                    .map(|body| body.get_position())
+                    .map(|body| core_vec(body.get_position()))
             })
             .collect();
 
         let Some(target_y) = player_logic::find_adjacent_row_target_y(
-            player_pos,
+            core_vec(player_pos),
             &crate_positions,
-            GRID_SIZE,
+            SCENE_CONTRACT.cell_size,
             2.0,
             2.0,
         ) else {
@@ -603,7 +521,7 @@ impl LevelRuntime {
         let player_global = player.get_global_position();
 
         let tree = self.base().get_tree();
-        let crates: Array<Gd<Node>> = tree.get_nodes_in_group("crate");
+        let crates: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
 
         let mut nearest: Option<Gd<RigidBody2D>> = None;
         let mut nearest_dx = f32::INFINITY;
@@ -623,7 +541,7 @@ impl LevelRuntime {
             return;
         };
 
-        if nearest_dx > GRID_SIZE * 2.0 {
+        if nearest_dx > SCENE_CONTRACT.cell_size * 2.0 {
             return;
         }
 
@@ -668,187 +586,25 @@ impl LevelRuntime {
     }
 
     fn capture_snapshot(&mut self) {
-        let Some(snapshot) = self.build_snapshot() else {
+        let Some(ref player) = self.player else {
             return;
         };
 
-        if let Some(ref mut undo_service) = self.undo_service {
-            undo_service.bind_mut().push_snapshot(snapshot);
-        }
-    }
+        let Some(snapshot) = build_stage_snapshot(&self.base(), player, &SCENE_CONTRACT) else {
+            return;
+        };
 
-    fn build_snapshot(&self) -> Option<StageSnapshot> {
-        let player = self.player.as_ref()?;
-
-        let facing = player
-            .clone()
-            .try_cast::<PlayerController>()
-            .ok()
-            .map(|controller| controller.bind().get_facing() as i32)
-            .unwrap_or(1);
-
-        let mut bodies: Vec<BodySnapshot> = Vec::new();
-
-        let tree = self.base().get_tree();
-        let crates: Array<Gd<Node>> = tree.get_nodes_in_group("crate");
-        for node in crates.iter_shared() {
-            if let Ok(body) = node.try_cast::<RigidBody2D>() {
-                bodies.push(BodySnapshot {
-                    name: body.get_name().to_string(),
-                    position: body.get_position(),
-                    linear_velocity: body.get_linear_velocity(),
-                });
-            }
-        }
-
-        bodies.sort_by(|a, b| a.name.cmp(&b.name));
-
-        Some(StageSnapshot {
-            player_position: player.get_position(),
-            player_velocity: player.get_velocity(),
-            player_facing: facing,
-            bodies,
-        })
+        self.undo_history.push_snapshot(snapshot);
     }
 
     fn apply_snapshot(&mut self, snapshot: StageSnapshot) {
         self.stage_cleared_emitted = false;
         self.player_died_emitted = false;
 
-        if let Some(ref mut player) = self.player {
-            player.set_position(snapshot.player_position);
-            player.set_velocity(snapshot.player_velocity);
-
-            if let Ok(mut script) = player.clone().try_cast::<PlayerController>() {
-                script.bind_mut().set_facing(snapshot.player_facing as i64);
-                script.bind_mut().set_input_enabled(true);
-            }
-        }
-
-        let tree = self.base().get_tree();
-
-        let mut existing: HashMap<String, Gd<RigidBody2D>> = HashMap::new();
-        let crate_nodes: Array<Gd<Node>> = tree.get_nodes_in_group("crate");
-        for node in crate_nodes.iter_shared() {
-            if let Ok(body) = node.try_cast::<RigidBody2D>() {
-                existing.insert(body.get_name().to_string(), body);
-            }
-        }
-
-        let mut snapshot_names = HashSet::new();
-
-        for body_snapshot in &snapshot.bodies {
-            snapshot_names.insert(body_snapshot.name.clone());
-
-            if let Some(mut body) = existing.remove(&body_snapshot.name) {
-                body.set_position(body_snapshot.position);
-                body.set_linear_velocity(body_snapshot.linear_velocity);
-            }
-        }
-
-        for (_, mut body) in existing {
-            if !snapshot_names.contains(&body.get_name().to_string()) {
-                body.set_linear_velocity(Vector2::ZERO);
-            }
-        }
-    }
-
-    fn snap_to_grid(pos: Vector2) -> Vector2 {
-        Vector2::new(Self::snap_grid(pos.x), Self::snap_grid(pos.y))
-    }
-
-    fn discover_stage_paths(stage_dir: &str) -> Vec<String> {
-        if let Some(stage_paths) = Self::load_stage_manifest(DEFAULT_STAGE_MANIFEST, stage_dir) {
-            return stage_paths;
-        }
-
-        let mut resource_loader = ResourceLoader::singleton();
-        let mut file_names: Vec<String> = resource_loader
-            .list_directory(stage_dir)
-            .to_vec()
-            .into_iter()
-            .map(|entry| entry.to_string())
-            .collect();
-
-        if file_names.is_empty() {
-            file_names = DirAccess::get_files_at(stage_dir)
-                .to_vec()
-                .into_iter()
-                .map(|entry| entry.to_string())
-                .collect();
-        }
-
-        let room_files = stage_paths::collect_sorted_room_files(file_names);
-
-        room_files
-            .into_iter()
-            .map(|file_name| format!("{}/{}", stage_dir, file_name))
-            .collect()
-    }
-
-    fn load_stage_manifest(manifest_path: &str, stage_dir: &str) -> Option<Vec<String>> {
-        let mut manifest = GFile::open(manifest_path, ModeFlags::READ).ok()?;
-        let raw = manifest.read_as_gstring_entire().ok()?.to_string();
-
-        let stage_paths: Vec<String> = raw
-            .lines()
-            .map(str::trim)
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .map(|line| {
-                if line.starts_with("res://") {
-                    line.to_string()
-                } else {
-                    format!("{}/{}", stage_dir, line)
-                }
-            })
-            .collect();
-
-        if stage_paths.is_empty() {
-            None
-        } else {
-            Some(stage_paths)
-        }
-    }
-
-    fn center_stage_in_viewport(stage: &mut Gd<Node2D>, viewport_size: Vector2) {
-        let stage_size_var = stage.get("size");
-        let stage_size = stage_size_var
-            .try_to::<Vector2>()
-            .ok()
-            .or_else(|| {
-                stage_size_var
-                    .try_to::<Vector2i>()
-                    .ok()
-                    .map(|v| Vector2::new(v.x as f32, v.y as f32))
-            })
-            .unwrap_or(Vector2::ZERO);
-
-        if stage_size.x <= 0.0 || stage_size.y <= 0.0 {
-            stage.set_position(Vector2::ZERO);
-            return;
-        }
-
-        let offset = Vector2::new(
-            ((viewport_size.x - stage_size.x) * 0.5).floor(),
-            ((viewport_size.y - stage_size.y) * 0.5).floor(),
-        );
-        stage.set_position(offset);
-    }
-
-    fn target_viewport_size() -> Vector2 {
-        let settings = ProjectSettings::singleton();
-
-        let width = settings
-            .get("display/window/size/viewport_width")
-            .to::<i64>() as f32;
-        let height = settings
-            .get("display/window/size/viewport_height")
-            .to::<i64>() as f32;
-
-        if width <= 0.0 || height <= 0.0 {
-            return Vector2::new(136.0, 136.0);
-        }
-
-        Vector2::new(width, height)
+        let mut player = self.player.take();
+        let root = self.base();
+        apply_stage_snapshot(&root, player.as_mut(), &snapshot, &SCENE_CONTRACT);
+        self.player = player;
+        self.set_player_input_enabled(true);
     }
 }
