@@ -4,8 +4,8 @@ use gameplay_core::{
 };
 use godot::{
     classes::{
-        CharacterBody2D, CollisionShape2D, ICharacterBody2D, Input, Node, Node2D, RectangleShape2D,
-        RigidBody2D, StaticBody2D, TileMapLayer,
+        AnimatedSprite2D, CharacterBody2D, CollisionShape2D, ICharacterBody2D, Input, Node, Node2D,
+        RectangleShape2D, RigidBody2D, StaticBody2D, TileMapLayer,
     },
     prelude::*,
 };
@@ -22,6 +22,13 @@ const WALK_STEP: f32 = 1.0;
 const VERTICAL_STEP: f32 = 2.0;
 const JUMP_COUNTER_START: i32 = 49;
 const JUMP_ASCEND_THRESHOLD: i32 = 44;
+// Template contract for a new player.tscn:
+// keep the PlayerController root, add an AnimatedSprite2D child named "AnimatedSprite2D" or "Visual",
+// and provide "idle", "move", and "jump" animations in its SpriteFrames.
+const PLAYER_TEMPLATE_ANIM_IDLE: &str = "idle";
+const PLAYER_TEMPLATE_ANIM_MOVE: &str = "move";
+const PLAYER_TEMPLATE_ANIM_JUMP: &str = "jump";
+const PLAYER_TEMPLATE_VISUAL_CANDIDATES: [&str; 2] = ["AnimatedSprite2D", "Visual"];
 
 struct CollisionContext {
     rules_tilemap: Option<Gd<TileMapLayer>>,
@@ -66,6 +73,7 @@ impl ICharacterBody2D for PlayerController {
 
     fn ready(&mut self) {
         self.base_mut().add_to_group(SCENE_CONTRACT.group_player);
+        self.sync_visual_template();
     }
 
     fn physics_process(&mut self, _delta: f64) {
@@ -112,6 +120,7 @@ impl ICharacterBody2D for PlayerController {
         self.base_mut().set_velocity(Vector2::ZERO);
         let state_context = self.build_collision_context();
         self.update_state(moved_horizontally, &state_context);
+        self.sync_visual_template();
     }
 }
 
@@ -128,7 +137,9 @@ impl PlayerController {
             self.push_cooldown = 0;
             self.reset_push_intent();
             self.jump_counter = 0;
+            self.state = PlayerState::Idle;
         }
+        self.sync_visual_template();
     }
 
     #[func]
@@ -144,11 +155,78 @@ impl PlayerController {
     #[func]
     pub fn set_facing(&mut self, facing: i64) {
         self.facing = if facing < 0 { -1 } else { 1 };
+        self.sync_visual_template();
+    }
+
+    #[func]
+    pub fn get_visual_state_name(&self) -> GString {
+        GString::from(Self::animation_name_for_state(self.state))
+    }
+
+    #[func]
+    pub fn refresh_visual_template(&mut self) {
+        self.sync_visual_template();
     }
 
     #[func]
     pub fn is_jump_active(&self) -> bool {
         self.jump_counter > 0 || self.state == PlayerState::Jump
+    }
+
+    fn animation_name_for_state(state: PlayerState) -> &'static str {
+        match state {
+            PlayerState::Idle => PLAYER_TEMPLATE_ANIM_IDLE,
+            PlayerState::Move => PLAYER_TEMPLATE_ANIM_MOVE,
+            PlayerState::Jump => PLAYER_TEMPLATE_ANIM_JUMP,
+        }
+    }
+
+    fn sync_visual_template(&self) {
+        let Some(mut sprite) = self.find_template_sprite() else {
+            return;
+        };
+
+        let should_flip = self.facing < 0;
+        sprite.set("flip_h", &should_flip.to_variant());
+
+        let animation = StringName::from(Self::animation_name_for_state(self.state));
+        let current_animation = sprite
+            .get("animation")
+            .try_to::<StringName>()
+            .ok()
+            .unwrap_or_else(|| StringName::from(""));
+        let is_playing = sprite
+            .call("is_playing", &[])
+            .try_to::<bool>()
+            .ok()
+            .unwrap_or(false);
+
+        if current_animation != animation || !is_playing {
+            sprite.call("play", &[animation.to_variant()]);
+        }
+    }
+
+    fn find_template_sprite(&self) -> Option<Gd<AnimatedSprite2D>> {
+        let base = self.base();
+
+        for path in PLAYER_TEMPLATE_VISUAL_CANDIDATES {
+            let Some(node) = base.get_node_or_null(path) else {
+                continue;
+            };
+
+            if let Ok(sprite) = node.try_cast::<AnimatedSprite2D>() {
+                return Some(sprite);
+            }
+        }
+
+        let children: Array<Gd<Node>> = base.get_children();
+        for node in children.iter_shared() {
+            if let Ok(sprite) = node.try_cast::<AnimatedSprite2D>() {
+                return Some(sprite);
+            }
+        }
+
+        None
     }
 
     fn reset_push_intent(&mut self) {
@@ -588,5 +666,26 @@ impl PlayerController {
 
     fn snap_y(value: f32) -> f32 {
         player_logic::snap_y(value, SCENE_CONTRACT.cell_size)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn player_template_animation_names_match_states() {
+        assert_eq!(
+            PlayerController::animation_name_for_state(PlayerState::Idle),
+            "idle"
+        );
+        assert_eq!(
+            PlayerController::animation_name_for_state(PlayerState::Move),
+            "move"
+        );
+        assert_eq!(
+            PlayerController::animation_name_for_state(PlayerState::Jump),
+            "jump"
+        );
     }
 }
