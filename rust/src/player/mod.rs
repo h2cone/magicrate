@@ -32,7 +32,7 @@ const PLAYER_TEMPLATE_VISUAL_CANDIDATES: [&str; 2] = ["AnimatedSprite2D", "Visua
 
 struct CollisionContext {
     rules_tilemap: Option<Gd<TileMapLayer>>,
-    crate_cells: Vec<Vector2>,
+    crate_cells: Vec<Rect2>,
     bridge_solids: Vec<Rect2>,
 }
 
@@ -346,7 +346,10 @@ impl PlayerController {
             let Ok(body) = node.try_cast::<RigidBody2D>() else {
                 continue;
             };
-            crate_cells.push(Self::crate_top_left(&body));
+            crate_cells.push(Rect2::new(
+                Self::crate_top_left(&body),
+                Vector2::new(SCENE_CONTRACT.cell_size, SCENE_CONTRACT.cell_size),
+            ));
         }
 
         let bridge_nodes: Array<Gd<Node>> =
@@ -428,28 +431,21 @@ impl PlayerController {
         true
     }
 
+    fn any_corner_hit(top_left: Vector2, predicate: impl Fn(Vector2) -> bool) -> bool {
+        let s = SCENE_CONTRACT.cell_size - 1.0;
+        predicate(top_left)
+            || predicate(top_left + Vector2::new(s, 0.0))
+            || predicate(top_left + Vector2::new(0.0, s))
+            || predicate(top_left + Vector2::new(s, s))
+    }
+
     fn is_collision_at(position: Vector2, context: &CollisionContext) -> bool {
-        Self::is_solid_point_for_player(Vector2::new(position.x, position.y), context)
-            || Self::is_solid_point_for_player(
-                Vector2::new(position.x + SCENE_CONTRACT.cell_size - 1.0, position.y),
-                context,
-            )
-            || Self::is_solid_point_for_player(
-                Vector2::new(position.x, position.y + SCENE_CONTRACT.cell_size - 1.0),
-                context,
-            )
-            || Self::is_solid_point_for_player(
-                Vector2::new(
-                    position.x + SCENE_CONTRACT.cell_size - 1.0,
-                    position.y + SCENE_CONTRACT.cell_size - 1.0,
-                ),
-                context,
-            )
+        Self::any_corner_hit(position, |p| Self::is_solid_point_for_player(p, context))
     }
 
     fn is_solid_point_for_player(point: Vector2, context: &CollisionContext) -> bool {
         Self::is_rule_solid_for_player(&context.rules_tilemap, point)
-            || Self::is_point_inside_cells(point, &context.crate_cells)
+            || Self::is_point_inside_rects(point, &context.crate_cells)
             || Self::is_point_inside_rects(point, &context.bridge_solids)
     }
 
@@ -463,20 +459,6 @@ impl PlayerController {
 
     fn rule_at_point(tilemap: &Gd<TileMapLayer>, point: Vector2) -> i32 {
         scene_ops::rule_at_point(tilemap, point, SCENE_CONTRACT.cell_size)
-    }
-
-    fn is_point_inside_cells(point: Vector2, cells: &[Vector2]) -> bool {
-        for top_left in cells {
-            if point.x >= top_left.x
-                && point.x < top_left.x + SCENE_CONTRACT.cell_size
-                && point.y >= top_left.y
-                && point.y < top_left.y + SCENE_CONTRACT.cell_size
-            {
-                return true;
-            }
-        }
-
-        false
     }
 
     fn is_point_inside_rects(point: Vector2, rects: &[Rect2]) -> bool {
@@ -634,25 +616,9 @@ impl PlayerController {
     }
 
     fn is_bridge_blocking_for_crate(bridge_solids: &[Rect2], target_top_left: Vec2) -> bool {
-        let target_top_left = godot_vec(target_top_left);
-
-        Self::is_point_inside_rects(target_top_left, bridge_solids)
-            || Self::is_point_inside_rects(
-                target_top_left + Vector2::new(SCENE_CONTRACT.cell_size - 1.0, 0.0),
-                bridge_solids,
-            )
-            || Self::is_point_inside_rects(
-                target_top_left + Vector2::new(0.0, SCENE_CONTRACT.cell_size - 1.0),
-                bridge_solids,
-            )
-            || Self::is_point_inside_rects(
-                target_top_left
-                    + Vector2::new(
-                        SCENE_CONTRACT.cell_size - 1.0,
-                        SCENE_CONTRACT.cell_size - 1.0,
-                    ),
-                bridge_solids,
-            )
+        Self::any_corner_hit(godot_vec(target_top_left), |p| {
+            Self::is_point_inside_rects(p, bridge_solids)
+        })
     }
 
     fn crate_top_left(body: &Gd<RigidBody2D>) -> Vector2 {

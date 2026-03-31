@@ -5,7 +5,7 @@ mod snapshot_io;
 use std::collections::HashSet;
 
 use gameplay_core::{
-    crate_runtime, player_logic,
+    crate_runtime,
     snapshot::{SnapshotHistory, StageSnapshot},
 };
 use godot::{
@@ -18,7 +18,7 @@ use crate::{
     core_bridge::{core_vec, godot_vec},
     entity::{bridge_switch::BridgeSwitch, bridge_tile::BridgeTile, goal_petal::GoalPetal},
     player::PlayerController,
-    rooms::StageLoader,
+    rooms,
 };
 
 use self::{
@@ -94,7 +94,6 @@ impl INode2D for LevelRuntime {
         }
 
         let crates_moved = self.update_crate_runtime();
-        self.align_player_with_adjacent_crate_row();
         self.update_bridge_state();
         self.check_goal_state();
         self.check_player_death();
@@ -131,7 +130,7 @@ impl LevelRuntime {
         let Some(stage_path) = self.stage_paths.get(index as usize).cloned() else {
             return false;
         };
-        let Some(mut stage_node) = StageLoader::instantiate_scene(&stage_path) else {
+        let Some(mut stage_node) = rooms::instantiate_scene(&stage_path) else {
             godot_error!("[LevelRuntime] failed to instantiate stage: {}", stage_path);
             return false;
         };
@@ -220,7 +219,7 @@ impl LevelRuntime {
     }
 
     fn spawn_player_for_stage(&mut self, stage: &mut Gd<Node2D>) -> bool {
-        let Some(scene) = StageLoader::load_scene(SCENE_CONTRACT.player_scene) else {
+        let Some(scene) = rooms::load_scene(SCENE_CONTRACT.player_scene) else {
             godot_error!(
                 "[LevelRuntime] missing player scene: {}",
                 SCENE_CONTRACT.player_scene
@@ -455,51 +454,6 @@ impl LevelRuntime {
 
         if let Ok(mut script) = player.clone().try_cast::<PlayerController>() {
             script.bind_mut().set_input_enabled(enabled);
-        }
-    }
-
-    fn align_player_with_adjacent_crate_row(&mut self) {
-        let Some(player) = self.player.as_ref() else {
-            return;
-        };
-
-        if let Ok(script) = player.clone().try_cast::<PlayerController>() {
-            if script.bind().is_jump_active() {
-                return;
-            }
-        }
-
-        let player_pos = player.get_position();
-
-        let tree = self.base().get_tree();
-        let crates: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
-        let crate_positions: Vec<_> = crates
-            .iter_shared()
-            .filter_map(|node| {
-                node.try_cast::<RigidBody2D>()
-                    .ok()
-                    .map(|body| core_vec(body.get_position()))
-            })
-            .collect();
-
-        let Some(target_y) = player_logic::find_adjacent_row_target_y(
-            core_vec(player_pos),
-            &crate_positions,
-            SCENE_CONTRACT.cell_size,
-            2.0,
-            2.0,
-        ) else {
-            return;
-        };
-
-        if (player_pos.y - target_y).abs() <= 0.01 {
-            return;
-        }
-
-        if let Some(ref mut player) = self.player {
-            let mut aligned = player_pos;
-            aligned.y = target_y;
-            player.set_position(aligned);
         }
     }
 
