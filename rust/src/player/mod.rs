@@ -1,20 +1,14 @@
-use gameplay_core::{
-    Vec2,
-    player_logic::{self, PushIntentProgress},
-};
+mod collision;
+mod movement;
+mod push;
+mod visual;
+
 use godot::{
-    classes::{
-        AnimatedSprite2D, CharacterBody2D, CollisionShape2D, ICharacterBody2D, Input, Node, Node2D,
-        RectangleShape2D, RigidBody2D, StaticBody2D, TileMapLayer,
-    },
+    classes::{CharacterBody2D, ICharacterBody2D, Input},
     prelude::*,
 };
 
-use crate::{
-    config::SCENE_CONTRACT,
-    core_bridge::{core_vec, godot_vec},
-    level::scene_ops,
-};
+use crate::config::SCENE_CONTRACT;
 
 const PUSH_COOLDOWN_FRAMES: i32 = 8;
 const PUSH_RESIST_FRAMES: i32 = 6;
@@ -22,6 +16,7 @@ const WALK_STEP: f32 = 1.0;
 const VERTICAL_STEP: f32 = 2.0;
 const JUMP_COUNTER_START: i32 = 49;
 const JUMP_ASCEND_THRESHOLD: i32 = 44;
+
 // Template contract for a new player.tscn:
 // keep the PlayerController root, add an AnimatedSprite2D child named "AnimatedSprite2D" or "Visual",
 // and provide "idle", "move", and "jump" animations in its SpriteFrames.
@@ -29,12 +24,6 @@ const PLAYER_TEMPLATE_ANIM_IDLE: &str = "idle";
 const PLAYER_TEMPLATE_ANIM_MOVE: &str = "move";
 const PLAYER_TEMPLATE_ANIM_JUMP: &str = "jump";
 const PLAYER_TEMPLATE_VISUAL_CANDIDATES: [&str; 2] = ["AnimatedSprite2D", "Visual"];
-
-struct CollisionContext {
-    rules_tilemap: Option<Gd<TileMapLayer>>,
-    crate_cells: Vec<Rect2>,
-    bridge_solids: Vec<Rect2>,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PlayerState {
@@ -84,6 +73,7 @@ impl ICharacterBody2D for PlayerController {
         let context = self.build_collision_context();
         self.apply_vertical_motion(&context);
         self.align_to_grid_when_grounded(&context);
+
         let input = Input::singleton();
         let mut axis = 0.0;
         let mut moved_horizontally = false;
@@ -105,12 +95,12 @@ impl ICharacterBody2D for PlayerController {
         }
 
         if axis.abs() > 0.01 {
-            if self.try_push_crates(axis, &context) {
-                moved_horizontally = true;
+            moved_horizontally = if self.try_push_crates(axis, &context) {
+                true
             } else {
                 let dir = if axis > 0.0 { 1.0 } else { -1.0 };
-                moved_horizontally = self.try_step(Vector2::new(dir * WALK_STEP, 0.0), &context);
-            }
+                self.try_step(Vector2::new(dir * WALK_STEP, 0.0), &context)
+            };
         } else {
             self.reset_push_intent();
         }
@@ -171,467 +161,6 @@ impl PlayerController {
     #[func]
     pub fn is_jump_active(&self) -> bool {
         self.jump_counter > 0 || self.state == PlayerState::Jump
-    }
-
-    fn animation_name_for_state(state: PlayerState) -> &'static str {
-        match state {
-            PlayerState::Idle => PLAYER_TEMPLATE_ANIM_IDLE,
-            PlayerState::Move => PLAYER_TEMPLATE_ANIM_MOVE,
-            PlayerState::Jump => PLAYER_TEMPLATE_ANIM_JUMP,
-        }
-    }
-
-    fn sync_visual_template(&self) {
-        let Some(mut sprite) = self.find_template_sprite() else {
-            return;
-        };
-
-        let should_flip = self.facing < 0;
-        sprite.set("flip_h", &should_flip.to_variant());
-
-        let animation = StringName::from(Self::animation_name_for_state(self.state));
-        let current_animation = sprite
-            .get("animation")
-            .try_to::<StringName>()
-            .ok()
-            .unwrap_or_else(|| StringName::from(""));
-        let is_playing = sprite
-            .call("is_playing", &[])
-            .try_to::<bool>()
-            .ok()
-            .unwrap_or(false);
-
-        if current_animation != animation || !is_playing {
-            sprite.call("play", &[animation.to_variant()]);
-        }
-    }
-
-    fn find_template_sprite(&self) -> Option<Gd<AnimatedSprite2D>> {
-        let base = self.base();
-
-        for path in PLAYER_TEMPLATE_VISUAL_CANDIDATES {
-            let Some(node) = base.get_node_or_null(path) else {
-                continue;
-            };
-
-            if let Ok(sprite) = node.try_cast::<AnimatedSprite2D>() {
-                return Some(sprite);
-            }
-        }
-
-        let children: Array<Gd<Node>> = base.get_children();
-        for node in children.iter_shared() {
-            if let Ok(sprite) = node.try_cast::<AnimatedSprite2D>() {
-                return Some(sprite);
-            }
-        }
-
-        None
-    }
-
-    fn reset_push_intent(&mut self) {
-        self.push_intent_dir = 0;
-        self.push_intent_timer = 0;
-    }
-
-    fn update_state(&mut self, moved_horizontally: bool, context: &CollisionContext) {
-        if self.jump_counter > 0 || !self.has_floor_support_at(self.base().get_position(), context)
-        {
-            self.state = PlayerState::Jump;
-            return;
-        }
-
-        if moved_horizontally {
-            self.state = PlayerState::Move;
-        } else {
-            self.state = PlayerState::Idle;
-        }
-    }
-
-    fn apply_vertical_motion(&mut self, context: &CollisionContext) {
-        if self.jump_counter > 0 {
-            self.jump_counter -= 1;
-            if self.jump_counter > JUMP_ASCEND_THRESHOLD {
-                let _ = self.try_step(Vector2::new(0.0, -VERTICAL_STEP), context);
-            }
-        }
-
-        if self.jump_counter > JUMP_ASCEND_THRESHOLD
-            && self.has_ceiling_block_at(self.base().get_position(), context)
-        {
-            self.jump_counter = JUMP_ASCEND_THRESHOLD;
-        }
-
-        if !self.has_floor_support_at(self.base().get_position(), context)
-            && self.jump_counter < JUMP_ASCEND_THRESHOLD
-        {
-            self.jump_counter = 1;
-            let _ = self.try_step(Vector2::new(0.0, VERTICAL_STEP), context);
-        }
-
-        if self.has_floor_support_at(self.base().get_position(), context) {
-            if self.jump_counter > 0 {
-                self.jump_counter = 0;
-            }
-            let mut pos = self.base().get_position();
-            pos.y = Self::snap_coord(pos.y);
-            self.base_mut().set_position(pos);
-        }
-    }
-
-    fn align_to_grid_when_grounded(&mut self, context: &CollisionContext) {
-        if self.jump_counter > 0 || !self.has_floor_support_at(self.base().get_position(), context)
-        {
-            return;
-        }
-
-        let current = self.base().get_position();
-        let snapped_y = Self::snap_y(current.y);
-        if (current.y - snapped_y).abs() <= 0.01 {
-            return;
-        }
-
-        let aligned = Vector2::new(current.x, snapped_y);
-        if !Self::is_collision_at(aligned, context) {
-            self.base_mut().set_position(aligned);
-        }
-    }
-
-    fn align_to_adjacent_crate_row(&mut self, context: &CollisionContext) {
-        if self.jump_counter > 0 || !self.has_floor_support_at(self.base().get_position(), context)
-        {
-            return;
-        }
-
-        let player_pos = self.base().get_position();
-
-        let tree = self.base().get_tree();
-        let crates: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
-        let crate_positions: Vec<Vec2> = crates
-            .iter_shared()
-            .filter_map(|node| {
-                node.try_cast::<RigidBody2D>()
-                    .ok()
-                    .map(|body| core_vec(Self::crate_top_left(&body)))
-            })
-            .collect();
-
-        let Some(target_y) = player_logic::find_adjacent_row_target_y(
-            core_vec(player_pos),
-            &crate_positions,
-            SCENE_CONTRACT.cell_size,
-            2.0,
-            SCENE_CONTRACT.cell_size,
-        ) else {
-            return;
-        };
-
-        if (player_pos.y - target_y).abs() <= 0.01 {
-            return;
-        }
-
-        let aligned = Vector2::new(player_pos.x, target_y);
-        if !Self::is_collision_at(aligned, context) {
-            self.base_mut().set_position(aligned);
-        }
-    }
-
-    fn build_collision_context(&self) -> CollisionContext {
-        let rules_tilemap = Self::find_rules_tilemap(&self.base());
-        let tree = self.base().get_tree();
-
-        let crate_nodes: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
-        let mut crate_cells = Vec::new();
-        for node in crate_nodes.iter_shared() {
-            let Ok(body) = node.try_cast::<RigidBody2D>() else {
-                continue;
-            };
-            crate_cells.push(Rect2::new(
-                Self::crate_top_left(&body),
-                Vector2::new(SCENE_CONTRACT.cell_size, SCENE_CONTRACT.cell_size),
-            ));
-        }
-
-        let bridge_nodes: Array<Gd<Node>> =
-            tree.get_nodes_in_group(SCENE_CONTRACT.group_bridge_tile);
-        let mut bridge_solids = Vec::new();
-        for node in bridge_nodes.iter_shared() {
-            let Ok(body) = node.try_cast::<StaticBody2D>() else {
-                continue;
-            };
-            if body.get_collision_layer() & 1 == 0 {
-                continue;
-            }
-
-            let Some(shape_node) =
-                body.get_node_or_null(SCENE_CONTRACT.bridge_collision_shape_path)
-            else {
-                continue;
-            };
-            let Ok(shape_node) = shape_node.try_cast::<CollisionShape2D>() else {
-                continue;
-            };
-            let Some(shape) = shape_node.get_shape() else {
-                continue;
-            };
-            let Ok(rect_shape) = shape.try_cast::<RectangleShape2D>() else {
-                continue;
-            };
-            let size = rect_shape.get_size();
-            if size.x <= 0.0 || size.y <= 0.0 {
-                continue;
-            }
-
-            let top_left = body.get_position() + shape_node.get_position() - (size * 0.5);
-            bridge_solids.push(Rect2::new(top_left, size));
-        }
-
-        CollisionContext {
-            rules_tilemap,
-            crate_cells,
-            bridge_solids,
-        }
-    }
-
-    fn find_rules_tilemap(player: &CharacterBody2D) -> Option<Gd<TileMapLayer>> {
-        let parent = player.get_parent()?;
-        let stage = parent.try_cast::<Node2D>().ok()?;
-        let tile_node = stage.get_node_or_null(SCENE_CONTRACT.rules_layer_path)?;
-        tile_node.try_cast::<TileMapLayer>().ok()
-    }
-
-    fn has_floor_support_at(&self, position: Vector2, context: &CollisionContext) -> bool {
-        Self::is_solid_point_for_player(
-            Vector2::new(position.x + 1.0, position.y + SCENE_CONTRACT.cell_size),
-            context,
-        ) || Self::is_solid_point_for_player(
-            Vector2::new(
-                position.x + SCENE_CONTRACT.cell_size - 2.0,
-                position.y + SCENE_CONTRACT.cell_size,
-            ),
-            context,
-        )
-    }
-
-    fn has_ceiling_block_at(&self, position: Vector2, context: &CollisionContext) -> bool {
-        Self::is_solid_point_for_player(Vector2::new(position.x + 1.0, position.y), context)
-            || Self::is_solid_point_for_player(
-                Vector2::new(position.x + SCENE_CONTRACT.cell_size - 2.0, position.y),
-                context,
-            )
-    }
-
-    fn try_step(&mut self, motion: Vector2, context: &CollisionContext) -> bool {
-        let target = self.base().get_position() + motion;
-        if Self::is_collision_at(target, context) {
-            return false;
-        }
-
-        self.base_mut().set_position(target);
-        true
-    }
-
-    fn any_corner_hit(top_left: Vector2, predicate: impl Fn(Vector2) -> bool) -> bool {
-        let s = SCENE_CONTRACT.cell_size - 1.0;
-        predicate(top_left)
-            || predicate(top_left + Vector2::new(s, 0.0))
-            || predicate(top_left + Vector2::new(0.0, s))
-            || predicate(top_left + Vector2::new(s, s))
-    }
-
-    fn is_collision_at(position: Vector2, context: &CollisionContext) -> bool {
-        Self::any_corner_hit(position, |p| Self::is_solid_point_for_player(p, context))
-    }
-
-    fn is_solid_point_for_player(point: Vector2, context: &CollisionContext) -> bool {
-        Self::is_rule_solid_for_player(&context.rules_tilemap, point)
-            || Self::is_point_inside_rects(point, &context.crate_cells)
-            || Self::is_point_inside_rects(point, &context.bridge_solids)
-    }
-
-    fn is_rule_solid_for_player(rules_tilemap: &Option<Gd<TileMapLayer>>, point: Vector2) -> bool {
-        let Some(tilemap) = rules_tilemap else {
-            return false;
-        };
-
-        SCENE_CONTRACT.player_rule_is_solid(Self::rule_at_point(tilemap, point))
-    }
-
-    fn rule_at_point(tilemap: &Gd<TileMapLayer>, point: Vector2) -> i32 {
-        scene_ops::rule_at_point(tilemap, point, SCENE_CONTRACT.cell_size)
-    }
-
-    fn is_point_inside_rects(point: Vector2, rects: &[Rect2]) -> bool {
-        for rect in rects {
-            if point.x >= rect.position.x
-                && point.x < rect.position.x + rect.size.x
-                && point.y >= rect.position.y
-                && point.y < rect.position.y + rect.size.y
-            {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    fn try_push_crates(&mut self, axis: f32, context: &CollisionContext) -> bool {
-        let Some(dir_sign) = player_logic::direction_from_axis(axis) else {
-            self.reset_push_intent();
-            return false;
-        };
-
-        if self.push_cooldown > 0 || !self.has_floor_support_at(self.base().get_position(), context)
-        {
-            self.reset_push_intent();
-            return false;
-        }
-
-        let (next_dir, next_timer, progress) = player_logic::update_push_intent(
-            self.push_intent_dir,
-            self.push_intent_timer,
-            dir_sign,
-            PUSH_RESIST_FRAMES,
-        );
-        self.push_intent_dir = next_dir;
-        self.push_intent_timer = next_timer;
-
-        match progress {
-            PushIntentProgress::DirectionChanged => {
-                return false;
-            }
-            PushIntentProgress::Waiting => {
-                if self.resolve_push_chain(dir_sign, context).is_none() {
-                    self.reset_push_intent();
-                }
-                return false;
-            }
-            PushIntentProgress::Ready => {}
-        }
-
-        let Some((chain, push_y)) = self.resolve_push_chain(dir_sign, context) else {
-            self.reset_push_intent();
-            return false;
-        };
-
-        let dir = dir_sign as f32;
-        for mut body in chain.into_iter().rev() {
-            let top_left = Self::crate_top_left(&body);
-            let next_top_left =
-                Vector2::new(top_left.x + dir * SCENE_CONTRACT.cell_size, top_left.y);
-            body.set_position(next_top_left);
-            body.set_linear_velocity(Vector2::ZERO);
-            body.set_angular_velocity(0.0);
-            body.set_sleeping(true);
-        }
-
-        let mut position = self.base().get_position();
-        position.x = Self::snap_coord(position.x + dir * SCENE_CONTRACT.cell_size);
-        position.y = push_y;
-        self.base_mut().set_position(position);
-
-        self.push_cooldown = PUSH_COOLDOWN_FRAMES;
-        self.reset_push_intent();
-        self.signals().crate_pushed().emit();
-        true
-    }
-
-    fn resolve_push_chain(
-        &self,
-        dir_sign: i32,
-        context: &CollisionContext,
-    ) -> Option<(Vec<Gd<RigidBody2D>>, f32)> {
-        let tree = self.base().get_tree();
-        let crates: Array<Gd<Node>> = tree.get_nodes_in_group(SCENE_CONTRACT.group_crate);
-        if crates.is_empty() {
-            return None;
-        }
-
-        let crate_cells: Vec<Vec2> = crates
-            .iter_shared()
-            .filter_map(|node| {
-                node.try_cast::<RigidBody2D>()
-                    .ok()
-                    .map(|body| core_vec(Self::crate_top_left(&body)))
-            })
-            .collect();
-
-        let plan = player_logic::resolve_push_chain_plan(
-            core_vec(self.base().get_position()),
-            dir_sign,
-            &crate_cells,
-            SCENE_CONTRACT.cell_size,
-            |target_top_left| {
-                Self::is_rule_blocking_for_crate(&context.rules_tilemap, target_top_left)
-                    || Self::is_bridge_blocking_for_crate(&context.bridge_solids, target_top_left)
-            },
-        )?;
-
-        let chain = Self::chain_cells_to_bodies(&crates, &plan.chain_cells)?;
-        Some((chain, plan.push_y))
-    }
-
-    fn chain_cells_to_bodies(
-        crates: &Array<Gd<Node>>,
-        chain_cells: &[Vec2],
-    ) -> Option<Vec<Gd<RigidBody2D>>> {
-        let mut chain = Vec::with_capacity(chain_cells.len());
-        for &cell in chain_cells {
-            chain.push(Self::find_crate_at_cell(crates, cell)?);
-        }
-        Some(chain)
-    }
-
-    fn find_crate_at_cell(
-        crates: &Array<Gd<Node>>,
-        target_top_left: Vec2,
-    ) -> Option<Gd<RigidBody2D>> {
-        for node in crates.iter_shared() {
-            let Ok(body) = node.try_cast::<RigidBody2D>() else {
-                continue;
-            };
-
-            let crate_top_left = core_vec(Self::crate_top_left(&body));
-            if (crate_top_left.x - target_top_left.x).abs() <= 0.5
-                && (crate_top_left.y - target_top_left.y).abs() <= 0.5
-            {
-                return Some(body);
-            }
-        }
-
-        None
-    }
-
-    fn is_rule_blocking_for_crate(
-        rules_tilemap: &Option<Gd<TileMapLayer>>,
-        target_top_left: Vec2,
-    ) -> bool {
-        let Some(tilemap) = rules_tilemap else {
-            return false;
-        };
-
-        let target_top_left = godot_vec(target_top_left);
-        let rule_value = Self::rule_at_point(tilemap, target_top_left + Vector2::new(0.1, 0.1));
-        SCENE_CONTRACT.crate_rule_is_solid(rule_value)
-    }
-
-    fn is_bridge_blocking_for_crate(bridge_solids: &[Rect2], target_top_left: Vec2) -> bool {
-        Self::any_corner_hit(godot_vec(target_top_left), |p| {
-            Self::is_point_inside_rects(p, bridge_solids)
-        })
-    }
-
-    fn crate_top_left(body: &Gd<RigidBody2D>) -> Vector2 {
-        let pos = body.get_position();
-        Vector2::new(Self::snap_coord(pos.x), Self::snap_y(pos.y))
-    }
-
-    fn snap_coord(value: f32) -> f32 {
-        player_logic::snap_coord(value, SCENE_CONTRACT.cell_size)
-    }
-
-    fn snap_y(value: f32) -> f32 {
-        player_logic::snap_y(value, SCENE_CONTRACT.cell_size)
     }
 }
 

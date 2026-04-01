@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use gameplay_core::snapshot::{BodySnapshot, StageSnapshot};
 use godot::{
@@ -73,11 +73,7 @@ pub fn apply_stage_snapshot(
         }
     }
 
-    let mut snapshot_names = HashSet::new();
-
     for body_snapshot in &snapshot.bodies {
-        snapshot_names.insert(body_snapshot.name.clone());
-
         if let Some(mut body) = existing.remove(&body_snapshot.name) {
             body.set_position(godot_vec(body_snapshot.position));
             body.set_linear_velocity(godot_vec(body_snapshot.linear_velocity));
@@ -85,8 +81,6 @@ pub fn apply_stage_snapshot(
     }
 
     for (_, mut body) in existing {
-        if !snapshot_names.contains(&body.get_name().to_string()) {
-            body.set_linear_velocity(Vector2::ZERO);
-        }
+        body.set_linear_velocity(Vector2::ZERO);
     }
 }

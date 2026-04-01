@@ -12,7 +12,7 @@ edition = "2024"
 crate-type = ["cdylib"]
 
 [dependencies]
-godot = { git = "https://github.com/godot-rust/gdext", rev = "7937a0bd02b8d52505a058a1c8494d4466db3059" }
+godot = { git = "https://github.com/godot-rust/gdext", rev = "dd3684eb17188c06fad6d94f2d7e3b54816e04f0" }
 gameplay_core = { path = "gameplay_core" }
 
 [profile.dev]

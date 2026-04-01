@@ -46,7 +46,7 @@ pub fn cleanup_entity_placeholders(stage: &mut Gd<Node2D>, contract: &SceneContr
 
     for mut node2d in to_remove {
         node2d.set_visible(false);
-        let mut node = node2d.clone().upcast::<Node>();
+        let mut node = node2d.upcast::<Node>();
         entities.remove_child(&node);
         node.queue_free();
     }

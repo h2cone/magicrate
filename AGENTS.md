@@ -1,30 +1,32 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`godot/` is the Godot 4.6 project. `game.tscn` is the entry scene, `entity/` and `player/` hold scene files, and `pipeline/ldtk/` contains LDtk data, post-import scripts, and generated room scenes. `godot/addons/` contains vendored plugins (`ldtk-importer`, `AsepriteWizard`); only edit these when intentionally updating vendor code.
+`godot/` houses the Godot 4 project. `game.tscn` is the entry scene; `entity/` and `player/` contain authored scenes; `pipeline/ldtk/` and `pipeline/aseprite/` hold imported level and art sources plus post-import scripts. Treat `godot/addons/` as vendored plugin code; only edit it when intentionally updating a dependency.
 
-`rust/` is the Rust workspace. The root crate builds the GDExtension bridge in `rust/src/`, while `rust/gameplay_core/src/` holds engine-agnostic gameplay logic such as movement, snapshots, undo history, and stage path handling. `scripts/` contains PowerShell entry points for local run, export, and `gdext` revision updates.
+`rust/` is a workspace. `rust/src/` contains the GDExtension bridge and Godot-facing systems, while `rust/gameplay_core/src/` keeps engine-agnostic rules, snapshots, stage paths, and undo logic. `scripts/` contains PowerShell helpers for run, export, and `gdext` updates. `export/` is generated output and ignored.
 
 ## Build, Test, and Development Commands
-`./scripts/run.ps1 -Build Debug` builds the Rust extension and launches Godot from `godot/`.
+Use PowerShell from the repo root.
 
-`./scripts/run.ps1 -Build None -Editor` opens the editor without rebuilding Rust.
+`./scripts/run.ps1 -Build Debug` builds the Rust extension and launches the game.
 
-`cd rust; cargo test --workspace` runs the Rust unit tests, including the inline tests in `gameplay_core`.
+`./scripts/run.ps1 -Build None -Editor` opens the Godot editor without rebuilding Rust.
 
-`cd rust; cargo fmt --all` formats Rust code with standard `rustfmt`.
+`cd rust; cargo test --workspace` runs inline Rust unit tests across both crates.
 
-`./scripts/export.ps1` produces a Windows export in `export/` and refreshes the LDtk stage manifest before packaging.
+`cd rust; cargo fmt --all` formats Rust sources with `rustfmt`.
+
+`./scripts/export.ps1` creates a Windows build in `export/`, refreshes the stage manifest, and copies the release DLL.
 
 ## Coding Style & Naming Conventions
-Rust follows `rustfmt` defaults: 4-space indentation, `snake_case` functions/modules, and `PascalCase` types. Keep pure rules and state transitions in `gameplay_core`; keep Godot-facing node registration, scene orchestration, and bridge code in the root crate.
+Rust uses `rustfmt` defaults: 4-space indentation, `snake_case` modules and functions, `PascalCase` types. Keep deterministic gameplay logic in `gameplay_core`; keep scene orchestration, node classes, and Godot bridge code in the root crate.
 
-GDScript uses tabs, uppercase `const` names, and `_prefixed` helpers for internal functions. Match existing scene and asset naming such as `bridge_switch.tscn` and `Room_0_0.scn`.
+GDScript follows the existing tab-indented style, uppercase `const` names, and `_helper_name` internals. Match existing asset names such as `bridge_switch.tscn`, `pushable_crate.rs`, and `Room_0_0.scn`.
 
 ## Testing Guidelines
-Prefer inline Rust tests with `#[cfg(test)] mod tests` next to the code they cover. New gameplay logic should land in `gameplay_core` with behavior-focused test names such as `push_dedup_applies_capacity`. For scene or import-pipeline changes, also run a local Godot launch check with `./scripts/run.ps1`.
+Place Rust tests beside the code they cover with `#[cfg(test)] mod tests`. There is no numeric coverage gate, but new gameplay rules should include focused unit tests in `gameplay_core`. For scene, import-pipeline, or export changes, also do a manual smoke run with `./scripts/run.ps1`.
 
 ## Commit & Pull Request Guidelines
-Current history uses short scoped subjects like `core: extract gameplay_core crate` and `export: support packaged Windows builds`. Follow `<area>: <imperative summary>`.
+Recent commits use scoped, imperative subjects like `player: simplify collision` and `export: support packaged Windows builds`. Follow `<area>: <summary>`.
 
-Pull requests should state the gameplay or tooling change, list the commands run, link related issues, and include screenshots or short clips for visible Godot changes.
+Pull requests should explain gameplay or tooling impact, list the commands run, link related issues, and include screenshots or short clips for visible Godot changes.
