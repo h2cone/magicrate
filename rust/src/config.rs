@@ -83,5 +83,5 @@ pub const SCENE_CONTRACT: SceneContract = SceneContract {
     player_fall_death_y: 300.0,
     rule_solid_all: 1,
     rule_solid_box_only: 2,
-    viewport_fallback: (136.0, 136.0),
+    viewport_fallback: (128.0, 128.0),
 };

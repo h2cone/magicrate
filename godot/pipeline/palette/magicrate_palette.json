@@ -1,0 +1,20 @@
+{
+  "entries": [
+    { "slot": 0, "name": "transparent", "hex": "#00000000" },
+    { "slot": 1, "name": "midnight", "hex": "#1D2B53" },
+    { "slot": 2, "name": "stone", "hex": "#5F574F" },
+    { "slot": 3, "name": "sky", "hex": "#29ADFF" },
+    { "slot": 4, "name": "cream", "hex": "#FFF1E8" },
+    { "slot": 5, "name": "pink", "hex": "#FF77A8" },
+    { "slot": 6, "name": "sun", "hex": "#FFEC27" },
+    { "slot": 7, "name": "peach", "hex": "#FFCCAA" },
+    { "slot": 8, "name": "lime", "hex": "#00E436" },
+    { "slot": 9, "name": "crimson", "hex": "#FF004D" },
+    { "slot": 10, "name": "amber", "hex": "#FFA300" },
+    { "slot": 11, "name": "slate", "hex": "#40465B" },
+    { "slot": 12, "name": "fog", "hex": "#696A79" },
+    { "slot": 13, "name": "lavender", "hex": "#83769C" },
+    { "slot": 14, "name": "silver", "hex": "#ADADB5" },
+    { "slot": 15, "name": "ink", "hex": "#000000" }
+  ]
+}
