@@ -4,5 +4,5 @@
 
 func post_import(world: LDTKWorld) -> LDTKWorld:
 	# Behaviour goes here
-	print("World: ", world)
+	#print("World: ", world)
 	return world

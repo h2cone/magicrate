@@ -5,5 +5,6 @@
 func post_import(tilesets: Dictionary) -> Dictionary:
 	# Behaviour goes here
 	for tileset: TileSet in tilesets.values():
-		print("Tileset: ", tileset, tileset.tile_size)
+		#print("Tileset: ", tileset, tileset.tile_size)
+		pass
 	return tilesets

@@ -3,20 +3,22 @@
 ## Project Structure & Module Organization
 `godot/` houses the Godot 4 project. `game.tscn` is the entry scene; `entity/` and `player/` contain authored scenes; `pipeline/ldtk/` and `pipeline/aseprite/` hold imported level and art sources plus post-import scripts. Treat `godot/addons/` as vendored plugin code; only edit it when intentionally updating a dependency.
 
-`rust/` is a workspace. `rust/src/` contains the GDExtension bridge and Godot-facing systems, while `rust/gameplay_core/src/` keeps engine-agnostic rules, snapshots, stage paths, and undo logic. `scripts/` contains PowerShell helpers for run, export, and `gdext` updates. `export/` is generated output and ignored.
+`rust/` is a workspace. `rust/src/` contains the GDExtension bridge and Godot-facing systems, while `rust/gameplay_core/src/` keeps engine-agnostic rules, snapshots, stage paths, and undo logic. `xtask/` contains the Rust workflow CLI used by `cargo xtask`; `scripts/` contains PowerShell compatibility wrappers and small local helpers. `export/` is generated output and ignored.
 
 ## Build, Test, and Development Commands
 Use PowerShell from the repo root.
 
-`./scripts/run.ps1 -Build Debug` builds the Rust extension and launches the game.
+`cargo xtask run` builds the debug Rust extension and launches the game. `./scripts/run.ps1 -Build Debug` remains as a PowerShell compatibility wrapper.
 
-`./scripts/run.ps1 -Build None -Editor` opens the Godot editor without rebuilding Rust.
+`cargo xtask run --build none --editor` opens the Godot editor without rebuilding Rust.
 
 `cd rust; cargo test --workspace` runs inline Rust unit tests across both crates.
 
 `cd rust; cargo fmt --all` formats Rust sources with `rustfmt`.
 
-`./scripts/export.ps1` creates a Windows build in `export/`, refreshes the stage manifest, and copies the release DLL.
+`cargo xtask export` creates a Windows build in `export/`, refreshes the stage manifest, and copies the release DLL. `./scripts/export.ps1` forwards to the same command.
+
+`cargo xtask update-gdext` updates the pinned `godot-rust` revision, and `cargo xtask update-godot-addons` refreshes vendored Godot add-ons.
 
 ## Coding Style & Naming Conventions
 Rust uses `rustfmt` defaults: 4-space indentation, `snake_case` modules and functions, `PascalCase` types. Keep deterministic gameplay logic in `gameplay_core`; keep scene orchestration, node classes, and Godot bridge code in the root crate.

@@ -1,0 +1,10 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+gdxtask = { git = "https://github.com/h2cone/gdxtask.git", rev = "db62781d3c15784d308ecac9df35f30cd35b1df3", features = ["cli", "addons", "gdext", "run-export"] }

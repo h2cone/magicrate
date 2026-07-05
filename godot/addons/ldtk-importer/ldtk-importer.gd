@@ -4,10 +4,6 @@ extends EditorImportPlugin
 const LDTK_LATEST_VERSION = "1.5.3"
 
 enum Presets {DEFAULT}
-enum LevelSaveExtensions {
-	SCN,
-	TSCN
-}
 
 const Util = preload("src/util/util.gd")
 const World = preload("src/world.gd")
@@ -37,7 +33,7 @@ func _get_recognized_extensions():
 	return ["ldtk"]
 
 func _get_save_extension():
-	return LevelSaveExtensions.keys()[Util.options.level_save_extension].to_lower()
+	return "scn"
 
 func _get_preset_count():
 	return Presets.size()
@@ -76,13 +72,6 @@ func _get_import_options(path, index):
 			"name": "pack_levels",
 			"default_value": true,
 		},
-		{
-			# Define LDTKLevels save extension.
-			"name": "level_save_extension",
-			"default_value": 0,
-			"property_hint": PROPERTY_HINT_ENUM,
-			"hint_string": "scn,tscn",
-		},
 		# --- Layers --- #
 		{"name": "Layer", "default_value":"", "usage": PROPERTY_USAGE_GROUP},
 		{
@@ -108,13 +97,6 @@ func _get_import_options(path, index):
 			"default_value": 0,
 			"property_hint": PROPERTY_HINT_ENUM,
 			"hint_string": "CompressedTexture2D,CanvasTexture",
-		},
-		{
-			# Define Godot tileset save extension.
-			"name": "tileset_save_extension",
-			"default_value": 0,
-			"property_hint": PROPERTY_HINT_ENUM,
-			"hint_string": "res,tres",
 		},
 		# --- Entities --- #
 		{"name": "Entity", "default_value":"", "usage": PROPERTY_USAGE_GROUP},
@@ -193,7 +175,6 @@ func _import(
 
 	Util.timer_start(Util.DebugTime.LOAD)
 	var world_data := Util.parse_file(source_file)
-	var external_levels: bool = world_data.externalLevels
 	Util.timer_finish("File parsed")
 
 	# Check version
@@ -204,7 +185,7 @@ func _import(
 
 	Util.timer_start(Util.DebugTime.GENERAL)
 	var definitions := DefinitionUtil.build_definitions(world_data)
-	var tileset_overrides := Tileset.get_tileset_overrides(world_data, base_dir, external_levels)
+	var tileset_overrides := Tileset.get_tileset_overrides(world_data)
 	Util.timer_finish("Definitions Created")
 
 	# Build Tilesets and save as Resources
@@ -216,6 +197,7 @@ func _import(
 	Tileset.get_entity_def_tiles(definitions, Util.tilesets)
 
 	# Detect Multi-Worlds
+	var external_levels: bool = world_data.externalLevels
 	var world_iid: String = world_data.iid
 
 	var world: LDTKWorld

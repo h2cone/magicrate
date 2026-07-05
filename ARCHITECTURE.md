@@ -74,10 +74,10 @@ At boot, `game.tscn` instantiates `Game` and `LevelRuntime`. `LevelRuntime` disc
 
 ### Tooling
 
-- `scripts/`
+- `xtask/` and `scripts/`
   Purpose: Local automation for build, run, export, and dependency updates.
-  Key files: `run.ps1`, `export.ps1`, `update_gdext.ps1`.
-  Relationships: Build the Rust extension, launch the Godot project, refresh `stage_manifest.txt` before export, normalize extension metadata, and update the pinned `godot-rust` revision.
+  Key files: `xtask/src/main.rs`, `scripts/run.ps1`, `scripts/export.ps1`, `scripts/update_gdext.ps1`.
+  Relationships: `cargo xtask` is the primary workflow entrypoint. It builds the Rust extension, launches the Godot project, refreshes `stage_manifest.txt` before export, normalizes extension metadata, updates the pinned `godot-rust` revision, and can refresh vendored Godot add-ons. PowerShell scripts remain as compatibility wrappers.
 
 ## Architectural Invariants
 
@@ -91,5 +91,5 @@ At boot, `game.tscn` instantiates `Game` and `LevelRuntime`. `LevelRuntime` disc
 
 - Runtime coordination relies on Godot signals and groups rather than direct references serialized into every scene. `Game` listens to `LevelRuntime`; `LevelRuntime` and `PlayerController` discover crates, switches, bridge tiles, goals, and hazard markers through scene groups.
 - The import pipeline is part of the architecture, not just content tooling. LDtk post-import scripts generate collision and marker nodes that runtime Rust code queries by name and group; Aseprite output feeds the player scene's animation resources.
-- Testing is Rust-first. Unit tests live inline next to the relevant gameplay modules, especially in `gameplay_core`; scene, import-pipeline, and export changes still need a manual smoke run through `scripts/run.ps1`.
-- `scripts/export.ps1` is the release path. It regenerates the stage manifest, checks export metadata, runs Godot headless export, and ensures the release `rust.dll` ships next to the exported executable.
+- Testing is Rust-first. Unit tests live inline next to the relevant gameplay modules, especially in `gameplay_core`; scene, import-pipeline, and export changes still need a manual smoke run through `cargo xtask run` or `scripts/run.ps1`.
+- `cargo xtask export` is the release path. It regenerates the stage manifest, checks export metadata, runs Godot headless export, and ensures the release `rust.dll` ships next to the exported executable.

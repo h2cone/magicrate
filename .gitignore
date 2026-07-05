@@ -1,3 +1,4 @@
 docs/p8
 .DS_Store
 export/
+xtask/target/
